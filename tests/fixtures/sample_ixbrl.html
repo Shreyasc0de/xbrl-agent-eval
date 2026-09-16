@@ -1,0 +1,65 @@
+<!--
+  SYNTHETIC FIXTURE. Hand-written for tests, not a real SEC filing.
+  It reproduces the structural features of an inline XBRL 10-K that matter for
+  the boundary invariant: an ix:header block, an ix:hidden block holding facts
+  that are tagged but never displayed to a human reader, ix:nonFraction and
+  ix:nonNumeric elements wrapping displayed text, and contextRef / unitRef /
+  scale / decimals / sign attributes.
+
+  The displayed text ("4,000" and so on) is what a human reader sees and MUST
+  survive preprocessing. Everything machine-readable around it must not.
+-->
+<html xmlns="http://www.w3.org/1999/xhtml"
+      xmlns:ix="http://www.xbrl.org/2013/inlineXBRL"
+      xmlns:ixt="http://www.xbrl.org/inlineXBRL/transformation/2020-02-12"
+      xmlns:xbrli="http://www.xbrl.org/2003/instance"
+      xmlns:us-gaap="http://fasb.org/us-gaap/2024"
+      xmlns:link="http://www.xbrl.org/2003/linkbase"
+      xmlns:xlink="http://www.w3.org/1999/xlink">
+<head><title>FORM 10-K</title></head>
+<body>
+<div style="display:none">
+  <ix:header>
+    <ix:hidden>
+      <ix:nonFraction contextRef="FD2024Q4YTD" name="us-gaap:ResearchAndDevelopmentExpense"
+                      unitRef="usd" scale="6" decimals="-6" format="ixt:num-dot-decimal">913</ix:nonFraction>
+      <ix:nonNumeric contextRef="FD2024Q4YTD" name="dei:EntityRegistrantName">Example Industrial Corp</ix:nonNumeric>
+    </ix:hidden>
+    <ix:references>
+      <link:schemaRef xlink:href="exmp-20241231.xsd" xlink:type="simple"/>
+    </ix:references>
+    <ix:resources>
+      <xbrli:context id="FD2024Q4YTD">
+        <xbrli:period><xbrli:startDate>2024-01-01</xbrli:startDate><xbrli:endDate>2024-12-31</xbrli:endDate></xbrli:period>
+      </xbrli:context>
+      <xbrli:unit id="usd"><xbrli:measure>iso4217:USD</xbrli:measure></xbrli:unit>
+    </ix:resources>
+  </ix:header>
+</div>
+
+<p>Item 8. Financial Statements</p>
+
+<table>
+  <tr>
+    <td>Total net sales</td>
+    <td>$&#160;<ix:nonFraction contextRef="FD2024Q4YTD" name="us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax"
+        unitRef="usd" scale="6" decimals="-6" format="ixt:num-dot-decimal">4,000</ix:nonFraction></td>
+  </tr>
+  <tr>
+    <td>Cost of sales</td>
+    <td>(<ix:nonFraction contextRef="FD2024Q4YTD" name="us-gaap:CostOfGoodsAndServicesSold"
+        unitRef="usd" scale="6" decimals="-6" sign="-" format="ixt:num-dot-decimal">2,500</ix:nonFraction>)</td>
+  </tr>
+  <tr>
+    <td>Cash and cash equivalents</td>
+    <td>$&#160;<ix:nonFraction contextRef="FI2024Q4" name="us-gaap:CashAndCashEquivalentsAtCarryingValue"
+        unitRef="usd" scale="3" decimals="-3" format="ixt:num-dot-decimal">812,400</ix:nonFraction></td>
+  </tr>
+</table>
+
+<p>The registrant, <ix:nonNumeric contextRef="FD2024Q4YTD" name="dei:EntityRegistrantName">Example Industrial Corp</ix:nonNumeric>,
+is a Delaware corporation. Amounts in millions except where noted.</p>
+
+<p>Research and development expense is not separately presented on the face of the statements.</p>
+</body>
+</html>

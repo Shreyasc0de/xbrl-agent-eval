@@ -1,0 +1,26 @@
+# Data is never committed. Run artifacts under runs/ are, since they are the
+# evidence for published claims.
+data/raw/
+data/filings/
+data/*.db
+data/*.db-journal
+data/*.db-wal
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+build/
+dist/
+.DS_Store
+.ipynb_checkpoints/
+
+# Session scratch folder mounted inside the repo, not part of the project.
+Claude outputs/

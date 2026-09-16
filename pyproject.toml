@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xbrl-agent-eval"
+version = "0.1.0"
+description = "A benchmark that grades agentic financial analysts against SEC XBRL ground truth."
+requires-python = ">=3.10"
+dependencies = [
+    "requests==2.32.3",
+    "lxml==5.3.0",
+    "beautifulsoup4==4.12.3",
+    "pydantic==2.9.2",
+    "click==8.1.7",
+    "python-dotenv==1.0.1",
+    "tqdm==4.66.5",
+    "numpy==2.1.1",
+    "pandas==2.2.3",
+    "matplotlib==3.9.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.3",
+    "pytest-cov==5.0.0",
+    "ruff==0.6.9",
+    "mypy==1.11.2",
+    "types-requests==2.32.0.20240914",
+    "pandas-stubs==2.2.2.240807",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "needs_network: requires live SEC access, not run in CI or in the dev sandbox",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM", "ARG", "PTH", "RUF"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ARG"]
+
+[tool.mypy]
+python_version = "3.10"
+mypy_path = "src"
+packages = ["ingest", "questions", "agents", "eval", "report", "core"]
+strict = true
+warn_unreachable = true
+disallow_any_generics = true
+no_implicit_optional = true
+
+[[tool.mypy.overrides]]
+module = ["bs4.*", "lxml.*", "matplotlib.*"]
+ignore_missing_imports = true
