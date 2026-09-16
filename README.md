@@ -25,11 +25,15 @@ Per the evidence rules in `CLAUDE.md`, no number appears here until it is comput
 | iXBRL stripper | implemented |
 | DERA loader | implemented, not yet run against real data |
 | EDGAR fetcher | implemented, not yet run against real data |
-| Question generation (L1 to L5) | not started |
+| Question generation (L1 to L5) | implemented, not yet run against real data |
+| Drop log and question set serialization | implemented |
+| Company roster | proposed, CIKs unverified until checked against loaded data |
 | Agent A, Agent B | not started |
-| Grader, metrics, error taxonomy | not started |
+| Metrics, confidence intervals, error taxonomy reporting | not started |
 
-Everything marked "not yet run against real data" has been unit-tested against fixtures only. SEC is not reachable from the development sandbox, so the ingest path is exercised on the host machine.
+Everything marked "not yet run against real data" has been unit-tested against fixtures only. SEC is not reachable from the development sandbox, so the ingest path and question generation are exercised on the host machine.
+
+No question set has been generated. The spec's Week 2 exit criterion, 600 or more validated questions with a dropped-question log, is not met and will not be until the DERA quarters are loaded and `python -m questions.generate` is run.
 
 ## Architecture
 
@@ -62,6 +66,16 @@ Run on the host machine, not in a sandbox. SEC enforces a rate limit of roughly 
 ```
 make data QUARTERS=2023q1,2023q2,2023q3,2023q4,2024q1,2024q2,2024q3,2024q4
 ```
+
+Then generate the question set:
+
+```
+python -m questions.generate --db data/xbrl.db --out data/questions
+```
+
+This writes `questions.jsonl`, `dropped.jsonl` and `summary.json` together. The drop log is not debugging output: a set of 700 questions means one thing if 200 candidates were dropped and something quite different if 20,000 were, and only the log distinguishes them.
+
+Two conventions the generators follow, both chosen deliberately. Unanswerable questions are phrased identically to answerable ones, so an agent cannot learn to abstain on wording rather than on the absence of a fact. And a concept counts as unanswerable only when the filing does not tag it and a majority of same-industry peers do, so absence alone is never mistaken for a question worth asking.
 
 Nothing under `data/` is committed. Run artifacts under `runs/` are committed, since they are the evidence for every published claim.
 
