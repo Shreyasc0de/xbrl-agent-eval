@@ -31,7 +31,7 @@ from ingest.filings import (
 )
 from ingest.ixbrl import assert_no_ixbrl_leak
 
-UA = "xbrl-agent-eval (someone@example.com)"
+UA = "xbrl-agent-eval someone@example.com"
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_ixbrl.html"
 
 SUBMISSIONS = {

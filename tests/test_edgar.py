@@ -19,7 +19,7 @@ from ingest.edgar import (
     build_user_agent,
 )
 
-UA = "xbrl-agent-eval (someone@example.com)"
+UA = "xbrl-agent-eval someone@example.com"
 
 
 class FakeTransport:
@@ -65,7 +65,7 @@ def test_user_agent_rejects_an_empty_app_name() -> None:
 
 
 def test_build_user_agent_produces_the_expected_shape() -> None:
-    assert build_user_agent("xbrl-agent-eval", "a@b.co") == "xbrl-agent-eval (a@b.co)"
+    assert build_user_agent("xbrl-agent-eval", "a@b.co") == "xbrl-agent-eval a@b.co"
 
 
 def test_client_refuses_a_user_agent_without_a_contact(tmp_path: Path) -> None:
@@ -183,6 +183,33 @@ def test_a_404_is_not_retried(tmp_path: Path) -> None:
     with pytest.raises(EdgarFetchError):
         client(tmp_path, transport).get("https://www.sec.gov/missing")
     assert len(transport.calls) == 1
+
+
+def test_a_403_is_not_retried(tmp_path: Path) -> None:
+    """SEC returns 403 for an undeclared automated tool. That is a statement
+
+    about the request, not a transient condition, and retrying it is what gets
+    a contact address blocked.
+    """
+    transport = FakeTransport(HttpResponse(403, b"Undeclared automated tool"))
+    with pytest.raises(EdgarFetchError, match="403"):
+        client(tmp_path, transport).get("https://www.sec.gov/a")
+    assert len(transport.calls) == 1
+
+
+def test_an_error_message_carries_the_response_body_and_user_agent(
+    tmp_path: Path,
+) -> None:
+    """SEC explains a refusal in the body. Discarding it turns a diagnosable
+
+    problem into a bare status code.
+    """
+    transport = FakeTransport(HttpResponse(403, b"Your request originated from an undeclared tool"))
+    with pytest.raises(EdgarFetchError) as caught:
+        client(tmp_path, transport).get("https://www.sec.gov/a")
+    message = str(caught.value)
+    assert "undeclared" in message
+    assert "someone@example.com" in message
 
 
 def test_a_429_is_retried_then_gives_up(tmp_path: Path) -> None:

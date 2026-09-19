@@ -41,7 +41,12 @@ DEFAULT_MAX_REQUESTS_PER_SECOND: Final[float] = 8.0
 
 # Retried, with backoff, a bounded number of times. Everything else raises on
 # the first response.
-_RETRYABLE_STATUSES: Final[frozenset[int]] = frozenset({403, 429, 500, 502, 503, 504})
+#
+# 403 is deliberately NOT retryable. SEC returns it for an undeclared or
+# disallowed automated tool, which is a statement about the request rather than
+# a transient condition, and retrying it is exactly the behaviour that gets a
+# contact address blocked.
+_RETRYABLE_STATUSES: Final[frozenset[int]] = frozenset({429, 500, 502, 503, 504})
 _DEFAULT_MAX_ATTEMPTS: Final[int] = 4
 
 _EMAIL_RE: Final[re.Pattern[str]] = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
@@ -70,8 +75,28 @@ class HttpResponse:
 Transport = Callable[[str, Mapping[str, str]], HttpResponse]
 
 
+def _describe_body(content: bytes) -> str:
+    """A short, readable excerpt of a response body, for error messages.
+
+    SEC explains a refusal in the body. Discarding it turns a diagnosable
+    problem into a bare status code, which is what the first version of this
+    did and it cost a debugging round trip.
+    """
+    if not content:
+        return "(empty body)"
+    text = content[:400].decode("utf-8", errors="replace")
+    collapsed = " ".join(text.split())
+    return collapsed if collapsed else "(whitespace only)"
+
+
 def build_user_agent(app_name: str, contact_email: str) -> str:
-    """Build the User-Agent SEC requires, rejecting anything without a contact."""
+    """Build the User-Agent SEC requires, rejecting anything without a contact.
+
+    Format follows SEC's own published example, which is a declaring name
+    followed by a contact address separated by a space. Earlier this wrapped the
+    address in parentheses, which is a conventional User-Agent comment syntax
+    but is not what SEC documents.
+    """
     if not app_name.strip():
         raise ValueError("app_name must not be empty")
     if not _EMAIL_RE.fullmatch(contact_email.strip()):
@@ -79,7 +104,7 @@ def build_user_agent(app_name: str, contact_email: str) -> str:
             f"contact_email must be a real address, got {contact_email!r}. "
             "SEC rejects requests without one."
         )
-    return f"{app_name.strip()} ({contact_email.strip()})"
+    return f"{app_name.strip()} {contact_email.strip()}"
 
 
 class RateLimiter:
@@ -192,8 +217,13 @@ class EdgarClient:
         return destination
 
     def _fetch(self, url: str) -> bytes:
-        headers = {"User-Agent": self.user_agent, "Accept-Encoding": "gzip, deflate"}
+        headers = {
+            "User-Agent": self.user_agent,
+            "Accept-Encoding": "gzip, deflate",
+            "Accept": "*/*",
+        }
         last_status: int | None = None
+        last_body = "(no response)"
 
         for attempt in range(1, self._max_attempts + 1):
             self._limiter.acquire()
@@ -204,13 +234,19 @@ class EdgarClient:
                 return response.content
 
             last_status = response.status_code
+            last_body = _describe_body(response.content)
+
             if response.status_code not in _RETRYABLE_STATUSES:
-                raise EdgarFetchError(f"{url} returned HTTP {response.status_code}")
+                raise EdgarFetchError(
+                    f"{url} returned HTTP {response.status_code}. "
+                    f"User-Agent sent: {self.user_agent!r}. Response: {last_body}"
+                )
             if attempt < self._max_attempts:
                 self._sleep(2.0 ** (attempt - 1))
 
         raise EdgarFetchError(
-            f"{url} still returning HTTP {last_status} after {self._max_attempts} attempts"
+            f"{url} still returning HTTP {last_status} after {self._max_attempts} "
+            f"attempts. User-Agent sent: {self.user_agent!r}. Response: {last_body}"
         )
 
 
