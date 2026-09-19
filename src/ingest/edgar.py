@@ -26,7 +26,9 @@ from pathlib import Path
 from typing import Final
 
 __all__ = [
+    "DERA_QUARTER_URL",
     "EdgarClient",
+    "client_from_env",
     "EdgarFetchError",
     "HttpResponse",
     "RateLimiter",
@@ -43,6 +45,11 @@ _RETRYABLE_STATUSES: Final[frozenset[int]] = frozenset({403, 429, 500, 502, 503,
 _DEFAULT_MAX_ATTEMPTS: Final[int] = 4
 
 _EMAIL_RE: Final[re.Pattern[str]] = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+
+# Quarterly Financial Statement Data Sets published by SEC DERA.
+DERA_QUARTER_URL: Final[str] = (
+    "https://www.sec.gov/files/dera/data/financial-statement-data-sets/{quarter}.zip"
+)
 
 
 class EdgarFetchError(RuntimeError):
@@ -161,6 +168,29 @@ class EdgarClient:
         temporary.replace(path)
         return content
 
+    def download(self, url: str, destination: Path) -> Path:
+        """Fetch a large file straight to ``destination``, skipping it if present.
+
+        Separate from ``get`` because a quarterly DERA archive runs to tens of
+        megabytes and putting it in the response cache as well as on disk would
+        store it twice. The skip-if-present check is what makes re-running the
+        data pull cheap rather than a fresh multi-gigabyte download.
+
+        The file is written to a temporary sibling and moved into place, so an
+        interrupted download cannot leave a truncated archive that a later run
+        treats as complete.
+        """
+        if destination.exists() and destination.stat().st_size > 0:
+            self.cache_hits += 1
+            return destination
+
+        content = self._fetch(url)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_suffix(destination.suffix + ".partial")
+        temporary.write_bytes(content)
+        temporary.replace(destination)
+        return destination
+
     def _fetch(self, url: str) -> bytes:
         headers = {"User-Agent": self.user_agent, "Accept-Encoding": "gzip, deflate"}
         last_status: int | None = None
@@ -193,3 +223,25 @@ def _requests_transport(url: str, headers: Mapping[str, str]) -> HttpResponse:
         content=response.content,
         headers=dict(response.headers),
     )
+
+
+def client_from_env(cache_dir: Path) -> EdgarClient:
+    """Build a client from ``.env``, refusing to run without a contact address.
+
+    SEC requires a real contact in the User-Agent. Defaulting to a placeholder
+    would get requests throttled or the address blocked partway through a run,
+    so a missing value stops the run before the first request.
+    """
+    import os
+
+    from dotenv import load_dotenv
+
+    load_dotenv()
+    email = os.environ.get("SEC_CONTACT_EMAIL", "").strip()
+    app = os.environ.get("SEC_USER_AGENT_APP", "xbrl-agent-eval").strip()
+    if not email:
+        raise ValueError(
+            "SEC_CONTACT_EMAIL is not set. Copy .env.example to .env and put a real "
+            "contact address in it; SEC rejects requests without one."
+        )
+    return EdgarClient(build_user_agent(app, email), cache_dir)

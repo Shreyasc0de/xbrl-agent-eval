@@ -19,12 +19,14 @@ Per the evidence rules in `CLAUDE.md`, no number appears here until it is comput
 | Component | State |
 |---|---|
 | Repo scaffold, tooling, CI | in place |
+| Runnable data pull (`make data`) | in place, not yet run against SEC |
 | `test_no_ixbrl_leak.py` | written, passing |
 | `test_normalizers.py` | mechanical cases passing; hand-verified-figure cases skipped pending real filing figures |
 | `test_grader.py` | written, passing |
-| iXBRL stripper | implemented |
-| DERA loader | implemented, not yet run against real data |
+| iXBRL stripper and text conversion | implemented |
+| DERA loader and its CLI | implemented, not yet run against real data |
 | EDGAR fetcher | implemented, not yet run against real data |
+| Filing fetch, strip and cache pipeline | implemented, not yet run against real data |
 | Question generation (L1 to L5) | implemented, not yet run against real data |
 | Drop log and question set serialization | implemented |
 | Company roster | proposed, CIKs unverified until checked against loaded data |
@@ -67,11 +69,15 @@ Run on the host machine, not in a sandbox. SEC enforces a rate limit of roughly 
 make data QUARTERS=2023q1,2023q2,2023q3,2023q4,2024q1,2024q2,2024q3,2024q4
 ```
 
-Then generate the question set:
+That runs three stages in order, and each can also be run on its own:
 
 ```
-python -m questions.generate --db data/xbrl.db --out data/questions
+python -m ingest.dera_loader --quarters 2024q3,2024q4   # ground truth into SQLite
+python -m ingest.filings                                # filings the agent reads
+python -m questions.generate                            # the question set
 ```
+
+The second stage is where the benchmark's boundary is enforced in practice. Each filing is fetched, stripped of inline XBRL, converted to text, checked for leaks twice, and only then written to `data/filings/`. A filing that cannot be cleaned is never cached, so a leak cannot reach a run through the back door of a stale cache file.
 
 This writes `questions.jsonl`, `dropped.jsonl` and `summary.json` together. The drop log is not debugging output: a set of 700 questions means one thing if 200 candidates were dropped and something quite different if 20,000 were, and only the log distinguishes them.
 

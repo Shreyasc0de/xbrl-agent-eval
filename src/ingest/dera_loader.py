@@ -311,3 +311,71 @@ def load_quarter(connection: sqlite3.Connection, zip_path: Path, quarter: str) -
         duplicates_ignored=ignored_counts,
         null_values=null_values,
     )
+
+
+# ---------------------------------------------------------------- command line
+
+
+def _cli() -> None:
+    """Download and load quarterly DERA archives.
+
+        python -m ingest.dera_loader --quarters 2024q1,2024q2 --db data/xbrl.db
+
+    Runs on the host machine. SEC is not reachable from a sandbox.
+    """
+    import click
+
+    from ingest.edgar import DERA_QUARTER_URL, client_from_env
+
+    @click.command()
+    @click.option(
+        "--quarters",
+        required=True,
+        help="Comma-separated quarters, for example 2024q1,2024q2.",
+    )
+    @click.option(
+        "--db",
+        "db_path",
+        type=click.Path(dir_okay=False, path_type=Path),
+        default=Path("data/xbrl.db"),
+        show_default=True,
+    )
+    @click.option(
+        "--raw-dir",
+        type=click.Path(file_okay=False, path_type=Path),
+        default=Path("data/raw"),
+        show_default=True,
+    )
+    def command(quarters: str, db_path: Path, raw_dir: Path) -> None:
+        names = [quarter.strip().lower() for quarter in quarters.split(",") if quarter.strip()]
+        if not names:
+            raise click.UsageError("--quarters listed no quarters")
+
+        client = client_from_env(raw_dir / ".http-cache")
+        connection = open_database(db_path)
+        create_schema(connection)
+
+        total = 0
+        for quarter in names:
+            url = DERA_QUARTER_URL.format(quarter=quarter)
+            click.echo(f"{quarter}: downloading")
+            archive = client.download(url, raw_dir / f"{quarter}.zip")
+
+            click.echo(f"{quarter}: loading {archive.stat().st_size / 1e6:.0f} MB")
+            report = load_quarter(connection, archive, quarter)
+            total += report.total_rows
+            click.echo(
+                f"{quarter}: {report.rows_inserted} inserted, "
+                f"{report.duplicates_ignored} duplicates ignored, "
+                f"{report.null_values} null values"
+            )
+
+        click.echo("building indexes")
+        create_indexes(connection)
+        click.echo(f"done: {total} rows across {len(names)} quarters into {db_path}")
+
+    command()
+
+
+if __name__ == "__main__":
+    _cli()

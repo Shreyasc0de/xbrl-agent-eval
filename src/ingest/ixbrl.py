@@ -29,7 +29,50 @@ from typing import Final
 
 from lxml import etree, html
 
-__all__ = ["IXBRLLeakError", "assert_no_ixbrl_leak", "strip_ixbrl"]
+__all__ = ["IXBRLLeakError", "assert_no_ixbrl_leak", "filing_to_text", "strip_ixbrl"]
+
+# Tags whose boundaries are meaningful to a reader. Financial statements are
+# tables, so row and cell boundaries have to survive into the text or every
+# figure runs into its neighbour and the retrieval layer sees noise.
+_BLOCK_TAGS: Final[frozenset[str]] = frozenset(
+    {
+        "address",
+        "article",
+        "blockquote",
+        "br",
+        "div",
+        "dd",
+        "dl",
+        "dt",
+        "fieldset",
+        "figcaption",
+        "figure",
+        "footer",
+        "form",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "header",
+        "hr",
+        "li",
+        "main",
+        "nav",
+        "ol",
+        "p",
+        "pre",
+        "section",
+        "table",
+        "tbody",
+        "tfoot",
+        "thead",
+        "tr",
+        "ul",
+    }
+)
+_CELL_TAGS: Final[frozenset[str]] = frozenset({"td", "th"})
 
 
 class IXBRLLeakError(AssertionError):
@@ -240,3 +283,57 @@ def assert_no_ixbrl_leak(document: str) -> None:
             raise IXBRLLeakError(
                 f"{description} survived preprocessing at offset {match.start()}: ...{context}..."
             )
+
+
+def filing_to_text(document: str) -> str:
+    """Render a stripped filing as plain text, preserving table structure.
+
+    The agent reads this, so it is the last point where a leak would matter.
+    ``assert_no_ixbrl_leak`` runs on the result, not only on the HTML, because a
+    conversion step is exactly the kind of place an attribute can reappear in
+    the output as visible text.
+
+    Cells are separated by tabs and rows by newlines. A financial statement is a
+    table, and a converter that flattens it to a stream of numbers destroys the
+    association between a line label and its figure, which is most of what the
+    agent needs to read.
+    """
+    assert_no_ixbrl_leak(document)
+
+    parser = html.HTMLParser(remove_comments=True, remove_pis=True, huge_tree=True)
+    root = html.document_fromstring(document, parser=parser)
+
+    # Source newlines are layout, not structure: a filing wraps a table cell
+    # across several lines of HTML for readability. Collapsing them before
+    # inserting real separators is what keeps a line label attached to its
+    # figure instead of splitting them onto separate lines.
+    for element in root.iter():
+        if not isinstance(element.tag, str):
+            continue
+        if element.text:
+            element.text = re.sub(r"\s+", " ", element.text)
+        if element.tail:
+            element.tail = re.sub(r"\s+", " ", element.tail)
+
+    for element in root.iter():
+        tag = element.tag
+        if not isinstance(tag, str):
+            continue
+        local = _localname(tag)
+        if local in _CELL_TAGS:
+            element.tail = (element.tail or "") + "\t"
+        elif local in _BLOCK_TAGS:
+            element.tail = (element.tail or "") + "\n"
+
+    raw = str(root.text_content())
+
+    lines: list[str] = []
+    for line in raw.replace("\xa0", " ").split("\n"):
+        cells = [re.sub(r"[ \t]+", " ", cell).strip() for cell in line.split("\t")]
+        cleaned = "\t".join(cell for cell in cells if cell)
+        if cleaned:
+            lines.append(cleaned)
+
+    text = "\n".join(lines)
+    assert_no_ixbrl_leak(text)
+    return text
