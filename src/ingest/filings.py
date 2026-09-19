@@ -334,6 +334,26 @@ def _cli() -> None:
         manifest = filings_dir / "manifest.jsonl"
         manifest.parent.mkdir(parents=True, exist_ok=True)
 
+        # The agent side of the boundary cannot import the roster, because the
+        # roster module reaches the XBRL database. So the company index it needs
+        # to turn a name in a question into a CIK is written out here, on this
+        # side, as plain data.
+        (filings_dir / "companies.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "cik": company.cik,
+                        "ticker": company.ticker,
+                        "display_name": company.display_name,
+                    }
+                    for company in ROSTER
+                ],
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+
         with manifest.open("w", encoding="utf-8") as handle:
             for company in ROSTER:
                 click.echo(f"{company.ticker}: fetching")

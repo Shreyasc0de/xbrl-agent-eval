@@ -30,7 +30,10 @@ Per the evidence rules in `CLAUDE.md`, no number appears here until it is comput
 | Question generation (L1 to L5) | implemented, not yet run against real data |
 | Drop log and question set serialization | implemented |
 | Company roster | proposed, CIKs unverified until checked against loaded data |
-| Agent A, Agent B | not started |
+| Model call cache, run manifest, backend interface | implemented |
+| Agent tools over the filing cache | implemented |
+| Structured answer parsing | implemented |
+| Agent A loop, Agent B, run harness | not started |
 | Metrics, confidence intervals, error taxonomy reporting | not started |
 
 Everything marked "not yet run against real data" has been unit-tested against fixtures only. SEC is not reachable from the development sandbox, so the ingest path and question generation are exercised on the host machine.
@@ -48,6 +51,10 @@ src/
   report/      figures, tables, verify_results.py
   core/        run manifests, LLM call cache, rate-limited HTTP client
 ```
+
+The boundary is checked structurally. `tests/test_agent_boundary.py` parses every module under `src/agents/` and fails the build if any of them imports `ingest`, `eval`, `questions` or `sqlite3`. A comment saying the modules must stay separate is not an invariant; an import graph checked on every commit is.
+
+Retrieval is deterministic lexical scoring, BM25 over fixed overlapping chunks, with no embeddings. Embeddings would likely retrieve better, but a run would stop being reproducible unless the embedding model, its version and its normalization were all pinned, and reproducibility is the property this benchmark is built around. An embedding retriever is a cleaner ablation to add later than a default to start with.
 
 `src/core/` is a deliberate addition to the layout in `docs/SPEC.md`. It holds the run infrastructure that both `agents/` and `report/` need, specifically the content-addressed model call cache and the run manifest writer. Keeping it separate is what lets `agents/` stay free of imports from `eval/` and `ingest/`.
 
