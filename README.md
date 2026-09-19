@@ -33,8 +33,11 @@ Per the evidence rules in `CLAUDE.md`, no number appears here until it is comput
 | Model call cache, run manifest, backend interface | implemented |
 | Agent tools over the filing cache | implemented |
 | Structured answer parsing | implemented |
-| Agent A loop, Agent B, run harness | not started |
-| Metrics, confidence intervals, error taxonomy reporting | not started |
+| Agent A, the single-agent ReAct loop | implemented, not yet run against a model |
+| Run harness and run artifacts | implemented, not yet run against a model |
+| Metrics with Wilson intervals | implemented |
+| Agent B, the multi-agent system | not started |
+| verify_results.py | not started |
 
 Everything marked "not yet run against real data" has been unit-tested against fixtures only. SEC is not reachable from the development sandbox, so the ingest path and question generation are exercised on the host machine.
 
@@ -53,6 +56,10 @@ src/
 ```
 
 The boundary is checked structurally. `tests/test_agent_boundary.py` parses every module under `src/agents/` and fails the build if any of them imports `ingest`, `eval`, `questions` or `sqlite3`. A comment saying the modules must stay separate is not an invariant; an import graph checked on every commit is.
+
+Every rate is reported with a 95% Wilson interval rather than as a point estimate. Per-level sample sizes are small, and the difference between 68% and 73% on a hundred questions is not a difference. Wilson rather than the normal approximation because the normal interval misbehaves exactly where this benchmark lives: small samples and proportions near zero, where it can include negative numbers.
+
+A failed task is not a wrong answer. A task that errored produced no answer at all, so counting it as incorrect would credit the agent with an attempt it never made, and dropping it silently would inflate accuracy. Failures are excluded from accuracy and reported as their own count.
 
 Retrieval is deterministic lexical scoring, BM25 over fixed overlapping chunks, with no embeddings. Embeddings would likely retrieve better, but a run would stop being reproducible unless the embedding model, its version and its normalization were all pinned, and reproducibility is the property this benchmark is built around. An embedding retriever is a cleaner ablation to add later than a default to start with.
 
@@ -83,6 +90,14 @@ python -m ingest.dera_loader --quarters 2024q3,2024q4   # ground truth into SQLi
 python -m ingest.filings                                # filings the agent reads
 python -m questions.generate                            # the question set
 ```
+
+Then run the benchmark:
+
+```
+python -m eval.run --system A --model qwen3:4b --limit 100
+```
+
+Each run writes `tasks.jsonl`, `metrics.json` and `manifest.json` into its own directory under `runs/`. The task traces keep the raw model output for every step, which is what lets a reader check that a claimed hallucination was a hallucination and not a parse failure.
 
 The second stage is where the benchmark's boundary is enforced in practice. Each filing is fetched, stripped of inline XBRL, converted to text, checked for leaks twice, and only then written to `data/filings/`. A filing that cannot be cleaned is never cached, so a leak cannot reach a run through the back door of a stale cache file.
 
