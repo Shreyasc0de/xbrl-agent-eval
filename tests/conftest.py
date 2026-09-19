@@ -81,12 +81,13 @@ def _insert_fact(
     qtrs: int,
     value: float | None,
     uom: str = "USD",
+    segments: str = "",
 ) -> None:
     connection.execute(
         "INSERT OR REPLACE INTO num "
-        "(adsh, tag, version, coreg, ddate, qtrs, uom, value) "
-        "VALUES (?, ?, ?, '', ?, ?, ?, ?)",
-        (adsh, tag, US_GAAP, ddate, qtrs, uom, value),
+        "(adsh, tag, version, coreg, segments, ddate, qtrs, uom, value) "
+        "VALUES (?, ?, ?, '', ?, ?, ?, ?, ?)",
+        (adsh, tag, US_GAAP, segments, ddate, qtrs, uom, value),
     )
 
 
@@ -164,6 +165,26 @@ def ground_truth_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
         "DELETE FROM num WHERE adsh = ? AND tag = 'ResearchAndDevelopmentExpense'",
         (_adsh(ACME, 2024),),
     )
+
+    # DELTA reports revenue broken down by product line as well as consolidated.
+    # The breakdown rows share every identifying column with the consolidated
+    # row except segments, which is the collision that silently replaced
+    # consolidated totals with single slices in the first real load.
+    for fy in (2023, 2024):
+        ddate = fy * 10000 + 1231
+        for segment, share in (
+            ("ProductOrService=Hardware;", 0.7),
+            ("ProductOrService=Services;", 0.3),
+        ):
+            _insert_fact(
+                connection,
+                _adsh(DELTA, fy),
+                "RevenueFromContractWithCustomerExcludingAssessedTax",
+                ddate,
+                4,
+                1_000_000_000.0 * 2.0 * (1.1 if fy == 2024 else 1.0) * share,
+                segments=segment,
+            )
 
     # BETA FY2023 tags two revenue concepts with different values, which makes
     # any revenue question about that filing ambiguous.

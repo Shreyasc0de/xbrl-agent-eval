@@ -31,7 +31,9 @@ from typing import Final
 
 __all__ = [
     "REQUIRED_COLUMNS",
+    "SCHEMA_VERSION",
     "LoadReport",
+    "SchemaVersionError",
     "create_indexes",
     "create_schema",
     "load_quarter",
@@ -53,7 +55,23 @@ REQUIRED_COLUMNS: Final[dict[str, tuple[str, ...]]] = {
         "filed",
         "prevrpt",
     ),
-    "num": ("adsh", "tag", "version", "coreg", "ddate", "qtrs", "uom", "value"),
+    # segments is load-bearing, not optional. It carries the dimensional
+    # breakdown of a fact: revenue by product line, by geography, by segment.
+    # A row with an empty segments is the consolidated figure; a row with a
+    # value is one slice of it. Both share every other identifying column, so
+    # leaving segments out of the key collapses them and an arbitrary slice
+    # wins.
+    "num": (
+        "adsh",
+        "tag",
+        "version",
+        "coreg",
+        "segments",
+        "ddate",
+        "qtrs",
+        "uom",
+        "value",
+    ),
     "pre": (
         "adsh",
         "report",
@@ -99,12 +117,21 @@ _REAL_COLUMNS: Final[frozenset[str]] = frozenset({"value"})
 
 _PRIMARY_KEYS: Final[dict[str, tuple[str, ...]]] = {
     "sub": ("adsh",),
-    "num": ("adsh", "tag", "version", "coreg", "ddate", "qtrs"),
+    "num": ("adsh", "tag", "version", "coreg", "segments", "ddate", "qtrs"),
     "pre": ("adsh", "report", "line"),
     "tag": ("tag", "version"),
 }
 
 _BATCH_SIZE: Final[int] = 20_000
+
+# Bumped whenever the schema or the primary keys change. A database written by
+# an older loader is refused rather than appended to, because mixing rows keyed
+# two different ways produces a silently wrong answer key.
+SCHEMA_VERSION: Final[int] = 2
+
+
+class SchemaVersionError(RuntimeError):
+    """The database on disk was built by a loader with a different schema."""
 
 
 @dataclass(frozen=True)
@@ -163,6 +190,19 @@ def create_schema(connection: sqlite3.Connection) -> None:
         "quarter TEXT, tbl TEXT, rows_inserted INTEGER, duplicates_ignored INTEGER, "
         "loaded_at TEXT DEFAULT CURRENT_TIMESTAMP)"
     )
+    connection.execute("CREATE TABLE IF NOT EXISTS schema_meta (version INTEGER NOT NULL)")
+
+    row = connection.execute("SELECT version FROM schema_meta").fetchone()
+    if row is None:
+        connection.execute("INSERT INTO schema_meta (version) VALUES (?)", (SCHEMA_VERSION,))
+    elif int(row[0]) != SCHEMA_VERSION:
+        raise SchemaVersionError(
+            f"this database was built by loader schema v{row[0]}, but this is "
+            f"v{SCHEMA_VERSION}. The fact primary key changed, so appending would "
+            "mix rows keyed two different ways and produce a silently wrong answer "
+            "key. Delete data/xbrl.db and reload; the downloaded archives are "
+            "cached, so it costs no network."
+        )
     connection.commit()
 
 

@@ -17,10 +17,23 @@ from typing import Final
 
 __all__ = ["FactRepository", "NumFact", "Submission"]
 
-# Only the parent registrant. A non-empty coreg marks a co-registrant's figures,
-# which sit in the same filing under a different reporting entity and would make
-# any question about "the company" ambiguous.
-_PARENT_ONLY: Final[str] = "coreg = ''"
+# The consolidated figure for the parent registrant, and nothing else.
+#
+# A non-empty coreg marks a co-registrant's figures, which sit in the same
+# filing under a different reporting entity. A non-empty segments marks a
+# dimensional breakdown: revenue for one product line, one geography, one
+# reportable segment. Both share every other identifying column with the
+# consolidated fact, so a query that does not exclude them can return a slice
+# of a figure as though it were the whole, which is a wrong answer key that
+# looks entirely plausible.
+_CONSOLIDATED_ONLY: Final[str] = "coreg = '' AND segments = ''"
+
+
+def _consolidated_only(prefix: str = "") -> str:
+    """The consolidated-only predicate, optionally table-qualified."""
+    if not prefix:
+        return _CONSOLIDATED_ONLY
+    return f"{prefix}.coreg = '' AND {prefix}.segments = ''"
 
 
 @dataclass(frozen=True)
@@ -117,7 +130,7 @@ class FactRepository:
             SELECT adsh, tag, version, ddate, qtrs, uom, value
             FROM num
             WHERE adsh = ? AND tag IN ({placeholders}) AND ddate = ? AND qtrs = ?
-              AND {_PARENT_ONLY}
+              AND {_CONSOLIDATED_ONLY}
             ORDER BY tag
             """,
             (adsh, *tags, ddate, qtrs),
@@ -126,7 +139,7 @@ class FactRepository:
 
     def tags_present(self, adsh: str) -> set[str]:
         rows = self._connection.execute(
-            f"SELECT DISTINCT tag FROM num WHERE adsh = ? AND {_PARENT_ONLY}",
+            f"SELECT DISTINCT tag FROM num WHERE adsh = ? AND {_CONSOLIDATED_ONLY}",
             (adsh,),
         ).fetchall()
         return {row[0] for row in rows}
@@ -135,7 +148,7 @@ class FactRepository:
         rows = self._connection.execute(
             f"""
             SELECT DISTINCT ddate FROM num
-            WHERE adsh = ? AND qtrs = ? AND {_PARENT_ONLY}
+            WHERE adsh = ? AND qtrs = ? AND {_CONSOLIDATED_ONLY}
             ORDER BY ddate DESC
             """,
             (adsh, qtrs),
@@ -195,7 +208,7 @@ class FactRepository:
             FROM num n
             JOIN sub s ON s.adsh = n.adsh
             WHERE s.cik = ? AND n.tag = ? AND n.ddate = ? AND n.qtrs = ?
-              AND s.filed > ? AND n.value IS NOT NULL AND {_PARENT_ONLY.replace("coreg", "n.coreg")}
+              AND s.filed > ? AND n.value IS NOT NULL AND {_consolidated_only("n")}
             """,
             (cik, tag, ddate, qtrs, filed_after),
         ).fetchall()
