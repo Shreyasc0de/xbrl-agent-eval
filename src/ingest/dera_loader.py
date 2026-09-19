@@ -398,8 +398,13 @@ def _cli() -> None:
         total = 0
         for quarter in names:
             url = DERA_QUARTER_URL.format(quarter=quarter)
-            click.echo(f"{quarter}: downloading")
-            archive = client.download(url, raw_dir / f"{quarter}.zip")
+            destination = raw_dir / f"{quarter}.zip"
+            # Say what is actually happening. Printing "downloading" on a cache
+            # hit makes a reload look like a fresh fetch, which matters when the
+            # whole point of the cache is that a rerun touches no network.
+            cached = destination.exists() and destination.stat().st_size > 0
+            click.echo(f"{quarter}: {'already downloaded' if cached else 'downloading'}")
+            archive = client.download(url, destination)
 
             click.echo(f"{quarter}: loading {archive.stat().st_size / 1e6:.0f} MB")
             report = load_quarter(connection, archive, quarter)
