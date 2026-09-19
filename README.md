@@ -69,10 +69,33 @@ The boundary invariant in code: agent tools read from `data/filings/`, the grade
 
 ## Setup
 
+Needs Python 3.10, 3.11 or 3.12. The upper bound is deliberate: the pinned scientific dependencies publish wheels for those versions, and on a newer interpreter pip falls back to building them from source and the install fails in a way that is easy to scroll past.
+
 ```
-make install
+make install             # picks a supported interpreter, or says why it cannot
 cp .env.example .env     # fill in SEC_CONTACT_EMAIL, SEC requires a real contact
 make check               # ruff, mypy, pytest
+```
+
+`make install` ends by importing every package, so a partial install fails loudly rather than leaving a venv that looks fine until the first run. If the interpreter it picks is wrong, override it:
+
+```
+make install PYTHON=/opt/homebrew/bin/python3.12
+```
+
+`make doctor` reports what is set up and what is not, and needs nothing installed to run:
+
+```
+$ make doctor
+python on PATH:   /usr/bin/python3 Python 3.12.4
+chosen for venv:  python3.12
+venv:             .venv, python3.12
+packages:         importable
+env file:         .env present
+ground truth:     missing, run make quarters
+filings:          missing, run make filings
+questions:        missing, run make questions
+ollama:           2 model(s)
 ```
 
 ## Data

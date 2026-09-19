@@ -6,7 +6,11 @@ build-backend = "setuptools.build_meta"
 name = "xbrl-agent-eval"
 version = "0.1.0"
 description = "A benchmark that grades agentic financial analysts against SEC XBRL ground truth."
-requires-python = ">=3.10"
+# Upper bound is deliberate. The pinned scientific dependencies publish
+# wheels for 3.10 through 3.12; on a newer interpreter pip falls back to
+# building them from source and the install fails in a way that is easy to
+# miss. Refusing the interpreter up front is a clearer failure.
+requires-python = ">=3.10,<3.13"
 dependencies = [
     "requests==2.32.3",
     "lxml==5.3.0",
