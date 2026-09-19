@@ -68,6 +68,24 @@ def test_build_user_agent_produces_the_expected_shape() -> None:
     assert build_user_agent("xbrl-agent-eval", "a@b.co") == "xbrl-agent-eval a@b.co"
 
 
+def test_the_user_agent_has_no_parentheses() -> None:
+    """Verified against the live service: SEC returns 403 for
+
+        xbrl-agent-eval (someone@example.com)
+
+    and 200 for
+
+        xbrl-agent-eval someone@example.com
+
+    Parentheses are conventional User-Agent comment syntax, so this looks like
+    a harmless stylistic choice and is not. Pinned here because the failure it
+    causes is a bare 403 that says nothing about the cause.
+    """
+    agent = build_user_agent("xbrl-agent-eval", "someone@example.com")
+    assert "(" not in agent
+    assert ")" not in agent
+
+
 def test_client_refuses_a_user_agent_without_a_contact(tmp_path: Path) -> None:
     """SEC blocks anonymous scrapers. Failing here is better than getting the
 
