@@ -36,7 +36,9 @@ doctor:
 		echo "venv:             missing, run make install"; \
 	fi
 	@if [ -f .env ]; then echo "env file:         .env present"; else echo "env file:         missing, cp .env.example .env"; fi
-	@if [ -f data/xbrl.db ]; then echo "ground truth:     data/xbrl.db"; else echo "ground truth:     missing, run make quarters"; fi
+	@if [ -f "$(DB)" ]; then \
+		echo "ground truth:     $(DB) ($$(du -h "$(DB)" | cut -f1))"; \
+	else echo "ground truth:     missing at $(DB), run make quarters"; fi
 	@if [ -f data/filings/manifest.jsonl ]; then \
 		echo "filings:          $$(wc -l < data/filings/manifest.jsonl | tr -d ' ') cached"; \
 	else echo "filings:          missing, run make filings"; fi
@@ -61,19 +63,27 @@ check: lint typecheck test
 
 # Runs on the host machine only. SEC is not reachable from the dev sandbox.
 # Requires SEC_CONTACT_EMAIL in .env: SEC rejects requests without a contact.
+#
+# DB deliberately defaults outside the repository. A multi-gigabyte SQLite
+# write lasting several minutes is the workload iCloud, Dropbox and similar
+# services interact with worst, and a repository on the Desktop sits inside
+# one. A file rewritten underneath SQLite mid-write kills the process with a
+# bus error that says nothing about its cause.
+DB ?= $(HOME)/xbrl-data/xbrl.db
+
 data: quarters filings questions
 
 quarters:
 ifndef QUARTERS
 	$(error QUARTERS is not set, for example: make data QUARTERS=2024q1,2024q2)
 endif
-	python -m ingest.dera_loader --quarters $(QUARTERS)
+	python -m ingest.dera_loader --quarters $(QUARTERS) --db $(DB)
 
 filings:
-	python -m ingest.filings
+	python -m ingest.filings --db $(DB)
 
 questions:
-	python -m questions.generate
+	python -m questions.generate --db $(DB)
 
 clean:
 	rm -rf .mypy_cache .ruff_cache .pytest_cache htmlcov .coverage

@@ -102,6 +102,8 @@ ollama:           2 model(s)
 
 Run on the host machine, not in a sandbox. SEC enforces a rate limit of roughly 10 requests per second and requires a descriptive User-Agent containing a contact email. Every filing is fetched once and cached to disk, which is also what makes runs reproducible.
 
+The database lives outside the repository by default, at `~/xbrl-data/xbrl.db`. That is deliberate rather than tidiness: a multi-gigabyte SQLite write lasting several minutes is exactly the workload iCloud, Dropbox and similar services interact with worst, and a checkout on the Desktop sits inside one. A file rewritten underneath SQLite mid-write kills the process with a bus error that says nothing about its cause. Override with `DB=`.
+
 ```
 make data QUARTERS=2023q1,2023q2,2023q3,2023q4,2024q1,2024q2,2024q3,2024q4
 ```
@@ -109,9 +111,9 @@ make data QUARTERS=2023q1,2023q2,2023q3,2023q4,2024q1,2024q2,2024q3,2024q4
 That runs three stages in order, and each can also be run on its own:
 
 ```
-python -m ingest.dera_loader --quarters 2024q3,2024q4   # ground truth into SQLite
-python -m ingest.filings                                # filings the agent reads
-python -m questions.generate                            # the question set
+python -m ingest.dera_loader --quarters 2024q3,2024q4 --db ~/xbrl-data/xbrl.db
+python -m ingest.filings --db ~/xbrl-data/xbrl.db
+python -m questions.generate --db ~/xbrl-data/xbrl.db
 ```
 
 Then run the benchmark:
