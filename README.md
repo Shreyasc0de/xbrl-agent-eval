@@ -10,9 +10,13 @@ The benchmark rests on one asymmetry: **ground truth comes from structured XBRL,
 
 Per the evidence rules in `CLAUDE.md`, no number appears here until it is computed from a real run and checked by `src/report/verify_results.py` in CI. Placeholder and illustrative values are not written to this file.
 
-| System | Backend | L1 | L2 | L3 | L4 | L5 hallucination rate | Cost per correct answer |
-|---|---|---|---|---|---|---|---|
-| _(no runs yet)_ | | | | | | | |
+<!-- results:begin -->
+| System | Backend | Model | Graded | Accuracy | L5 hallucination rate | Cost per correct |
+|---|---|---|---|---|---|---|
+| _(no runs yet)_ | | | | | | |
+<!-- results:end -->
+
+This table is generated from `runs/`, not written by hand. `src/report/verify_results.py` regenerates it from the raw task records and fails the build if it differs, so it cannot drift away from the runs behind it. A number quoted in prose carries a claim marker naming the run and metric it came from, and is checked the same way.
 
 ## Status
 

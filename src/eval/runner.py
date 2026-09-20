@@ -112,6 +112,7 @@ class TaskRecord:
     tool_calls: int
     model_calls: int
     latency_ms: float
+    cost_usd: float
     filings_opened: list[str]
     chunks_opened: list[str]
     opened_correct_filing: bool
@@ -131,6 +132,7 @@ class TaskRecord:
             "tool_calls": self.tool_calls,
             "model_calls": self.model_calls,
             "latency_ms": round(self.latency_ms, 2),
+            "cost_usd": self.cost_usd,
             "filings_opened": self.filings_opened,
             "chunks_opened": self.chunks_opened,
             "opened_correct_filing": self.opened_correct_filing,
@@ -189,6 +191,7 @@ def _grade_one(question: QuestionRecord, result: AgentResult) -> TaskRecord:
             tool_calls=result.tool_calls,
             model_calls=result.model_calls,
             latency_ms=result.latency_ms,
+            cost_usd=0.0,
             filings_opened=result.filings_opened,
             chunks_opened=result.chunks_opened,
             opened_correct_filing=opened_correct,
@@ -217,6 +220,7 @@ def _grade_one(question: QuestionRecord, result: AgentResult) -> TaskRecord:
             tool_calls=result.tool_calls,
             model_calls=result.model_calls,
             latency_ms=result.latency_ms,
+            cost_usd=0.0,
             filings_opened=result.filings_opened,
             chunks_opened=result.chunks_opened,
             opened_correct_filing=opened_correct,
@@ -248,6 +252,7 @@ def _grade_one(question: QuestionRecord, result: AgentResult) -> TaskRecord:
         tool_calls=result.tool_calls,
         model_calls=result.model_calls,
         latency_ms=result.latency_ms,
+        cost_usd=0.0,
         filings_opened=result.filings_opened,
         chunks_opened=result.chunks_opened,
         opened_correct_filing=opened_correct,
@@ -255,14 +260,21 @@ def _grade_one(question: QuestionRecord, result: AgentResult) -> TaskRecord:
     )
 
 
-def _outcome(record: TaskRecord, cost_usd: float) -> TaskOutcome:
+def _outcome(record: TaskRecord) -> TaskOutcome:
+    """Reduce a record to what the metrics need.
+
+    Cost comes off the record rather than being passed alongside it, so the
+    number the metrics use is the same number written to disk. Any other
+    arrangement lets the published figure and the artifact drift apart, which
+    is exactly what verify_results exists to catch.
+    """
     return TaskOutcome(
         question_id=record.question_id,
         level=record.level,
         correct=bool(record.correct),
         failed=record.failed,
         error_class=record.error_class,
-        cost_usd=cost_usd,
+        cost_usd=record.cost_usd,
         latency_ms=record.latency_ms,
         tool_calls=record.tool_calls,
         model_calls=record.model_calls,
@@ -305,9 +317,9 @@ def run_question_set(
     started = time.perf_counter()
     records: list[TaskRecord] = []
     # Cost is attributed per task by differencing the backend's running total
-    # around each call, kept alongside the records rather than stashed on them,
-    # so a TaskRecord stays exactly what gets written to disk.
-    task_costs: list[float] = []
+    # around each call, and stored on the record so it reaches disk. Without it
+    # in the artifacts, cost per correct answer cannot be recomputed from raw
+    # logs and the README figure would have to be taken on trust.
     cost_before = getattr(backend, "total_cost_usd", 0.0)
 
     for index, question in enumerate(questions, start=1):
@@ -328,8 +340,8 @@ def run_question_set(
             )
 
         record = _grade_one(question, result)
+        record.cost_usd = round(getattr(backend, "total_cost_usd", 0.0) - before, 10)
         records.append(record)
-        task_costs.append(getattr(backend, "total_cost_usd", 0.0) - before)
 
         if progress is not None:
             progress(index, len(questions), record)
@@ -348,7 +360,7 @@ def run_question_set(
     # nothing is fabricated output no matter what it contains.
     manifest.assert_work_happened()
 
-    outcomes = [_outcome(record, float(getattr(record, "_cost", 0.0))) for record in records]
+    outcomes = [_outcome(record) for record in records]
     metrics = summarize_run(outcomes)
 
     run_dir.mkdir(parents=True, exist_ok=True)
