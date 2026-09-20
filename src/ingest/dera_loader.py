@@ -31,6 +31,7 @@ from typing import Final, TextIO
 
 __all__ = [
     "REQUIRED_COLUMNS",
+    "warn_if_synced",
     "SCHEMA_VERSION",
     "LoadReport",
     "SchemaVersionError",
@@ -163,11 +164,56 @@ def _column_type(column: str) -> str:
 
 
 def open_database(path: Path) -> sqlite3.Connection:
+    """Open the ground truth database, configured to survive a synced folder.
+
+    ``mmap_size = 0`` disables SQLite's memory-mapped reads. Mapped pages assume
+    the file underneath them does not move, and on a folder that something else
+    is syncing or copying, a rewritten file turns the next page fault into
+    SIGBUS and kills the process outright. Disabling the mapping costs a little
+    read speed and removes that failure entirely.
+
+    A database on a synced folder is still a bad idea and ``warn_if_synced``
+    says so, but it should degrade rather than crash.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path)
     connection.execute("PRAGMA journal_mode = WAL")
     connection.execute("PRAGMA synchronous = NORMAL")
+    connection.execute("PRAGMA mmap_size = 0")
     return connection
+
+
+# Folders that something else writes to behind your back. A multi-gigabyte
+# SQLite database being written for ten minutes is exactly the workload these
+# interact with worst.
+_SYNCED_MARKERS: Final[tuple[str, ...]] = (
+    "/Library/Mobile Documents/",
+    "/Dropbox/",
+    "/Google Drive/",
+    "/OneDrive/",
+    "/Desktop/",
+    "/Documents/",
+)
+
+
+def warn_if_synced(path: Path) -> str:
+    """Return a warning if the database path looks like a synced location.
+
+    Returns an empty string when the path looks fine. This is a heuristic on
+    the path text, not a filesystem check, because the thing being detected is
+    a background service the process cannot see.
+    """
+    resolved = str(path.expanduser().resolve())
+    for marker in _SYNCED_MARKERS:
+        if marker in resolved:
+            return (
+                f"the database path sits under {marker.strip('/')!r}, which iCloud, "
+                "Dropbox and similar services sync in the background. A file being "
+                "rewritten underneath SQLite mid-write can kill the process with a "
+                "bus error. Consider --db ~/xbrl-data/xbrl.db, outside any synced "
+                "folder."
+            )
+    return ""
 
 
 def create_schema(connection: sqlite3.Connection) -> None:
@@ -415,6 +461,10 @@ def _cli() -> None:
         names = [quarter.strip().lower() for quarter in quarters.split(",") if quarter.strip()]
         if not names:
             raise click.UsageError("--quarters listed no quarters")
+
+        warning = warn_if_synced(db_path)
+        if warning:
+            click.echo(f"warning: {warning}", err=True)
 
         client = client_from_env(raw_dir / ".http-cache")
         connection = open_database(db_path)
