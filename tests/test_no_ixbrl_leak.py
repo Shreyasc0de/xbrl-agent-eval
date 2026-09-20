@@ -95,3 +95,52 @@ def test_assert_no_ixbrl_leak_accepts_stripped_filing(stripped: str) -> None:
 
 def test_stripper_is_idempotent(stripped: str) -> None:
     assert strip_ixbrl(stripped) == stripped
+
+
+# --------------------------------------------------------------------------
+# False positives, found on real filings
+# --------------------------------------------------------------------------
+# Fail closed is the right default for this check, but a check that fires on
+# ordinary English stops being a check and becomes an outage. Two real Bank of
+# America filings were refused because "currency", "country" and "invest" are
+# taxonomy prefixes as well as common words.
+
+
+@pytest.mark.parametrize(
+    "prose",
+    [
+        "Foreign currency: Net increase (decrease) in fair value 33 (70) (37) 80",
+        "Net change in country: United States and other regions",
+        "We invest: primarily in investment grade debt securities",
+        "Functional currency: the US dollar",
+    ],
+)
+def test_ordinary_prose_is_not_mistaken_for_a_taxonomy_qname(prose: str) -> None:
+    assert_no_ixbrl_leak(prose)
+
+
+@pytest.mark.parametrize(
+    "leak",
+    [
+        "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax",
+        "dei:EntityRegistrantName",
+        "srt:ConsolidatedEntitiesAxis",
+        "currency:USD",
+        "country:US",
+    ],
+)
+def test_a_real_taxonomy_qname_is_still_caught(leak: str) -> None:
+    """The narrowing must not have opened a hole: a QName has no space around
+
+    the colon and an upper camel case local name, and those are exactly what
+    distinguishes it from prose.
+    """
+    with pytest.raises(IXBRLLeakError):
+        assert_no_ixbrl_leak(f"some text {leak} more text")
+
+
+def test_a_qname_with_a_space_after_the_colon_is_prose_not_markup() -> None:
+    """This is the whole distinction, stated as a test."""
+    assert_no_ixbrl_leak("us-gaap: Revenues were higher this year")
+    with pytest.raises(IXBRLLeakError):
+        assert_no_ixbrl_leak("us-gaap:Revenues")

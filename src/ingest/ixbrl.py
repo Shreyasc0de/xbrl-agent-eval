@@ -118,19 +118,41 @@ _DROP_ATTRS: Final[frozenset[str]] = frozenset(
     }
 )
 
-# Tokens that must never appear in agent-visible text. Checked case-insensitively
-# except where the token is only meaningful in its given case.
-_LEAK_PATTERNS: Final[tuple[tuple[str, str], ...]] = (
-    (r"<\s*/?\s*ix\s*:", "ix: element"),
-    (r"xmlns\s*:\s*ix", "ix namespace declaration"),
-    (r"inlineXBRL", "inline XBRL namespace URI"),
-    (r"\bcontextRef\b", "contextRef attribute"),
-    (r"\bunitRef\b", "unitRef attribute"),
-    (r"\bxbrli\s*:", "xbrli: element or namespace"),
-    (r"\bxbrldi\s*:", "xbrldi: element or namespace"),
-    (r"\bxlink\s*:", "xlink: attribute or namespace"),
-    (r"\bschemaRef\b", "schemaRef element"),
-    (r"\b(?:us-gaap|dei|srt|ifrs-full|invest|country|currency)\s*:\s*[A-Za-z]", "taxonomy QName"),
+# Tokens that must never appear in agent-visible text.
+#
+# Each entry carries its own flags, because these patterns do not all want the
+# same matching. Markup names are case-insensitive in practice; a taxonomy
+# QName is not, and matching it case-insensitively is what made this check
+# reject real filings.
+_LEAK_PATTERNS: Final[tuple[tuple[str, str, int], ...]] = (
+    (r"<\s*/?\s*ix\s*:", "ix: element", re.IGNORECASE),
+    (r"xmlns\s*:\s*ix", "ix namespace declaration", re.IGNORECASE),
+    (r"inlineXBRL", "inline XBRL namespace URI", re.IGNORECASE),
+    (r"\bcontextRef\b", "contextRef attribute", re.IGNORECASE),
+    (r"\bunitRef\b", "unitRef attribute", re.IGNORECASE),
+    (r"\bxbrli\s*:", "xbrli: element or namespace", re.IGNORECASE),
+    (r"\bxbrldi\s*:", "xbrldi: element or namespace", re.IGNORECASE),
+    (r"\bxlink\s*:", "xlink: attribute or namespace", re.IGNORECASE),
+    (r"\bschemaRef\b", "schemaRef element", re.IGNORECASE),
+    # A taxonomy QName is prefix:LocalName with no whitespace around the colon
+    # and an upper camel case local name. Both details matter.
+    #
+    # "currency", "country" and "invest" are taxonomy prefixes and also ordinary
+    # English words, and filings are full of lines like "Foreign currency: Net
+    # increase (decrease) in fair value". An earlier version of this pattern
+    # allowed whitespace after the colon and matched case-insensitively, so it
+    # read that sentence as a leak and refused to cache two real filings. Fail
+    # closed is the right default, but a check that fires on English prose
+    # stops being a check and becomes an outage.
+    #
+    # The local name is two or more characters, not three: country:US and
+    # currency:US are real QNames, and requiring three silently exempted them.
+    (
+        r"\b(?:us-gaap|dei|srt|ifrs-full|invest|country|currency|exch|naics|sic|stpr|utr)"
+        r":[A-Z][A-Za-z0-9]+\b",
+        "taxonomy QName",
+        0,
+    ),
 )
 
 
@@ -297,8 +319,8 @@ def assert_no_ixbrl_leak(document: str) -> None:
     not only after stripping. A leak that reaches an agent invalidates the run
     it appears in and every comparison that run takes part in.
     """
-    for pattern, description in _LEAK_PATTERNS:
-        match = re.search(pattern, document, flags=re.IGNORECASE)
+    for pattern, description, flags in _LEAK_PATTERNS:
+        match = re.search(pattern, document, flags=flags)
         if match is not None:
             start = max(0, match.start() - 60)
             context = document[start : match.end() + 60].replace("\n", " ")
