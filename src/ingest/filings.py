@@ -298,6 +298,7 @@ def _cli() -> None:
 
     import click
 
+    from core.paths import default_db_path, default_filings_dir
     from ingest.edgar import client_from_env
     from questions.companies import ROSTER, RosterMismatchError, verify_roster
     from questions.repository import FactRepository
@@ -307,15 +308,15 @@ def _cli() -> None:
         "--db",
         "db_path",
         type=click.Path(exists=True, dir_okay=False, path_type=Path),
-        default=Path("data/xbrl.db"),
-        show_default=True,
+        default=default_db_path,
+        show_default="~/xbrl-data/xbrl.db, or $XBRL_DB",
     )
     @click.option(
         "--out",
         "filings_dir",
         type=click.Path(file_okay=False, path_type=Path),
-        default=Path("data/filings"),
-        show_default=True,
+        default=default_filings_dir,
+        show_default="alongside the database",
     )
     @click.option("--forms", default="10-K,10-Q", show_default=True)
     @click.option("--limit", type=int, default=None, help="Filings per company, newest first.")

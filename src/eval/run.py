@@ -21,6 +21,7 @@ from agents.system_a import SystemA
 from agents.tools import FilingStore
 from core.cache import LLMCache
 from core.llm import CachingBackend, OllamaBackend
+from core.paths import default_filings_dir, default_questions_dir
 from eval.runner import load_questions, run_question_set
 
 __all__ = ["main"]
@@ -34,15 +35,15 @@ __all__ = ["main"]
     "--questions",
     "questions_path",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    default=Path("data/questions/questions.jsonl"),
-    show_default=True,
+    default=lambda: default_questions_dir() / "questions.jsonl",
+    show_default="alongside the database",
 )
 @click.option(
     "--filings",
     "filings_dir",
     type=click.Path(exists=True, file_okay=False, path_type=Path),
-    default=Path("data/filings"),
-    show_default=True,
+    default=default_filings_dir,
+    show_default="alongside the database",
 )
 @click.option(
     "--runs",

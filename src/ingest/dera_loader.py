@@ -436,6 +436,7 @@ def _cli() -> None:
     """
     import click
 
+    from core.paths import default_db_path
     from ingest.edgar import DERA_QUARTER_URL, client_from_env
 
     @click.command()
@@ -448,14 +449,14 @@ def _cli() -> None:
         "--db",
         "db_path",
         type=click.Path(dir_okay=False, path_type=Path),
-        default=Path("data/xbrl.db"),
-        show_default=True,
+        default=default_db_path,
+        show_default="~/xbrl-data/xbrl.db, or $XBRL_DB",
     )
     @click.option(
         "--raw-dir",
         type=click.Path(file_okay=False, path_type=Path),
-        default=Path("data/raw"),
-        show_default=True,
+        default=lambda: default_db_path().parent / "raw",
+        show_default="alongside the database",
     )
     def command(quarters: str, db_path: Path, raw_dir: Path) -> None:
         names = [quarter.strip().lower() for quarter in quarters.split(",") if quarter.strip()]

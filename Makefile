@@ -69,7 +69,10 @@ check: lint typecheck test
 # services interact with worst, and a repository on the Desktop sits inside
 # one. A file rewritten underneath SQLite mid-write kills the process with a
 # bus error that says nothing about its cause.
-DB ?= $(HOME)/xbrl-data/xbrl.db
+# Matches core.paths.default_db_path, including the XBRL_DB override, so the
+# Makefile and the command line entry points cannot disagree about where the
+# database is. They already did once.
+DB ?= $(if $(XBRL_DB),$(XBRL_DB),$(HOME)/xbrl-data/xbrl.db)
 
 data: quarters filings questions
 

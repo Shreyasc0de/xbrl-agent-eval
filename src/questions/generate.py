@@ -24,6 +24,7 @@ from pathlib import Path
 
 import click
 
+from core.paths import default_db_path, default_questions_dir
 from questions.companies import ROSTER, RosterMismatchError, verify_roster
 from questions.generators import GeneratorConfig, generate_all
 from questions.repository import FactRepository
@@ -36,16 +37,16 @@ __all__ = ["main"]
     "--db",
     "db_path",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    default=Path("data/xbrl.db"),
-    show_default=True,
+    default=default_db_path,
+    show_default="~/xbrl-data/xbrl.db, or $XBRL_DB",
     help="SQLite ground truth built by the DERA loader.",
 )
 @click.option(
     "--out",
     "out_dir",
     type=click.Path(file_okay=False, path_type=Path),
-    default=Path("data/questions"),
-    show_default=True,
+    default=default_questions_dir,
+    show_default="alongside the database",
     help="Directory for questions.jsonl, dropped.jsonl and summary.json.",
 )
 @click.option("--min-peers", default=3, show_default=True, help="L5: peers that must tag it.")
