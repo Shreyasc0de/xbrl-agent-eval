@@ -31,11 +31,9 @@ from typing import Any
 
 from agents.answer import AnswerParseError, ParsedAnswer, parse_answer
 from agents.prompts import ActionParseError, build_prompt, parse_action
-from agents.tools import FilingStore, ToolError, calculate, tool_catalogue
+from agents.tools import FilingStore, run_tool, tool_catalogue
 
 __all__ = ["AgentResult", "Step", "SystemA"]
-
-MAX_TOOL_RESULT_CHARS = 3_000
 
 
 @dataclass
@@ -221,59 +219,7 @@ class SystemA:
         filings_opened: list[str],
         chunks_opened: list[str],
     ) -> tuple[str, str]:
-        """Dispatch one tool call. Returns (observation, error), never both set.
-
-        A tool error is returned to the model as text rather than raised, because
-        calling a tool wrongly and recovering is normal agent behaviour and the
-        benchmark is not measuring whether a model can guess an argument name on
-        the first try. An error that repeats until the step budget runs out still
-        fails the task, which is the right outcome.
-        """
-        try:
-            if tool == "list_filings":
-                handles = self._store.list_filings(
-                    str(arguments.get("company", "")), str(arguments.get("form", ""))
-                )
-                if not handles:
-                    return "No filings matched.", ""
-                lines = [
-                    f"{handle.adsh}\t{handle.form}\t{handle.filing_date}\t{handle.company_name}"
-                    for handle in handles[:20]
-                ]
-                return "\n".join(lines), ""
-
-            if tool == "search_filing":
-                adsh = str(arguments.get("adsh", ""))
-                query = str(arguments.get("query", ""))
-                top_k = int(arguments.get("top_k", 5) or 5)
-                hits = self._store.search_filing(adsh, query, top_k)
-                if adsh not in filings_opened:
-                    filings_opened.append(adsh)
-                if not hits:
-                    return "No passages matched that query.", ""
-                blocks = [f"[{hit.chunk_id}] {hit.heading}\n{hit.snippet}" for hit in hits]
-                return _truncate("\n\n".join(blocks)), ""
-
-            if tool == "read_section":
-                chunk_id = str(arguments.get("chunk_id", ""))
-                text = self._store.read_section(chunk_id)
-                if chunk_id not in chunks_opened:
-                    chunks_opened.append(chunk_id)
-                adsh = chunk_id.split("#", 1)[0]
-                if adsh not in filings_opened:
-                    filings_opened.append(adsh)
-                return _truncate(text), ""
-
-            if tool == "calculate":
-                expression = str(arguments.get("expression", ""))
-                return f"{calculate(expression)}", ""
-
-            return "", f"unknown tool {tool!r}"
-
-        except ToolError as error:
-            return "", f"tool error: {error}"
-        except (TypeError, ValueError) as error:
-            return "", f"bad arguments for {tool}: {error}"
+        return run_tool(self._store, tool, arguments, filings_opened, chunks_opened)
 
     def _failed(
         self,
@@ -300,9 +246,3 @@ class SystemA:
 
 def _render_arguments(arguments: dict[str, Any]) -> str:
     return ", ".join(f"{name}={value!r}" for name, value in sorted(arguments.items()))
-
-
-def _truncate(text: str) -> str:
-    if len(text) <= MAX_TOOL_RESULT_CHARS:
-        return text
-    return text[:MAX_TOOL_RESULT_CHARS] + "\n[tool output truncated]"

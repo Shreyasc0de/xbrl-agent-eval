@@ -34,6 +34,7 @@ from typing import Any, Final
 
 __all__ = [
     "Chunk",
+    "run_tool",
     "FilingHandle",
     "FilingStore",
     "SearchHit",
@@ -395,3 +396,84 @@ def tool_catalogue() -> Iterable[dict[str, Any]]:
             "arguments": {"expression": "for example (400 - 250) / 400 * 100"},
         },
     )
+
+
+MAX_TOOL_RESULT_CHARS: Final[int] = 3_000
+
+
+def truncate_tool_output(text: str) -> str:
+    """Cap a tool result, marking it when cut.
+
+    The marker matters for the same reason it does in read_section: an agent
+    that cannot tell truncated output from complete output will confidently
+    report that a figure is absent.
+    """
+    if len(text) <= MAX_TOOL_RESULT_CHARS:
+        return text
+    return text[:MAX_TOOL_RESULT_CHARS] + "\n[tool output truncated]"
+
+
+def run_tool(
+    store: FilingStore,
+    tool: str,
+    arguments: dict[str, Any],
+    filings_opened: list[str],
+    chunks_opened: list[str],
+) -> tuple[str, str]:
+    """Dispatch one tool call. Returns (observation, error), never both set.
+
+    Shared by both systems deliberately. The benchmark compares orchestration
+    strategies, so anything below the orchestration has to be identical or the
+    comparison measures the wrong thing. Keeping one dispatcher makes that true
+    by construction rather than by careful copying.
+
+    A tool error is returned to the caller as text rather than raised, because
+    calling a tool wrongly and recovering is normal agent behaviour and the
+    benchmark is not measuring whether a model guesses argument names on the
+    first try. An error that repeats until the budget runs out still fails the
+    task, which is the right outcome.
+    """
+    try:
+        if tool == "list_filings":
+            handles = store.list_filings(
+                str(arguments.get("company", "")), str(arguments.get("form", ""))
+            )
+            if not handles:
+                return "No filings matched.", ""
+            lines = [
+                f"{handle.adsh}\t{handle.form}\t{handle.filing_date}\t{handle.company_name}"
+                for handle in handles[:20]
+            ]
+            return "\n".join(lines), ""
+
+        if tool == "search_filing":
+            adsh = str(arguments.get("adsh", ""))
+            query = str(arguments.get("query", ""))
+            top_k = int(arguments.get("top_k", 5) or 5)
+            hits = store.search_filing(adsh, query, top_k)
+            if adsh not in filings_opened:
+                filings_opened.append(adsh)
+            if not hits:
+                return "No passages matched that query.", ""
+            blocks = [f"[{hit.chunk_id}] {hit.heading}\n{hit.snippet}" for hit in hits]
+            return truncate_tool_output("\n\n".join(blocks)), ""
+
+        if tool == "read_section":
+            chunk_id = str(arguments.get("chunk_id", ""))
+            text = store.read_section(chunk_id)
+            if chunk_id not in chunks_opened:
+                chunks_opened.append(chunk_id)
+            adsh = chunk_id.split("#", 1)[0]
+            if adsh not in filings_opened:
+                filings_opened.append(adsh)
+            return truncate_tool_output(text), ""
+
+        if tool == "calculate":
+            return f"{calculate(str(arguments.get('expression', '')))}", ""
+
+        return "", f"unknown tool {tool!r}"
+
+    except ToolError as error:
+        return "", f"tool error: {error}"
+    except (TypeError, ValueError) as error:
+        return "", f"bad arguments for {tool}: {error}"

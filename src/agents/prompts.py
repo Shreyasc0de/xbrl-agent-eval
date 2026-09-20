@@ -27,7 +27,12 @@ from agents.answer import ANSWER_SCHEMA_DESCRIPTION
 
 __all__ = [
     "ACTION_PROTOCOL",
+    "FINDINGS_HEADER",
+    "PLANNER_PROMPT",
+    "RETRIEVER_PROMPT",
+    "SYNTHESIS_PROMPT",
     "SYSTEM_PROMPT",
+    "VERIFIER_PROMPT",
     "Action",
     "ActionParseError",
     "all_templates",
@@ -72,6 +77,58 @@ You have {remaining} tool call(s) left. Answer with the answer object now, using
 what you have read. If you did not find the figure, answer "not_disclosed"."""
 
 
+# ------------------------------------------------------------------ system B
+#
+# The multi-agent prompts. These share SYSTEM_PROMPT and the answer schema with
+# System A on purpose: the comparison is between orchestration strategies, not
+# between prompts. If B answered with a different schema or a differently worded
+# abstention rule, any difference in hallucination rate would be attributable to
+# the wording rather than to the architecture.
+
+PLANNER_PROMPT: Final[str] = """\
+You are planning how to answer a question about an SEC filing.
+
+Break the question into one to three specific things that must be looked up in
+the filings. Each one should name a company and a figure. Do not answer the
+question. Do not guess at any number.
+
+Reply with exactly one JSON object and nothing else:
+
+{"subquestions": ["...", "..."]}"""
+
+RETRIEVER_PROMPT: Final[str] = """\
+You are looking up one specific figure in SEC filings, as part of answering a
+larger question. Find it and report exactly what the filing says.
+
+Report only what you actually read. If you cannot find the figure, say so
+plainly rather than estimating it."""
+
+SYNTHESIS_PROMPT: Final[str] = """\
+You are answering a question about an SEC filing, using findings gathered by
+other analysts who read the filings for you.
+
+Use only those findings. If they do not contain what the question asks for,
+answer "not_disclosed" rather than estimating, deriving, or recalling a figure.
+
+{answer_schema}"""
+
+VERIFIER_PROMPT: Final[str] = """\
+You are checking a proposed answer against the findings it was drawn from.
+
+Accept it only if the findings actually support it. Reject it if the number
+does not appear in the findings, if the arithmetic does not follow from them,
+or if the findings do not cover what the question asked.
+
+Rejecting a correct answer costs a retry. Accepting an unsupported one puts an
+invented figure into the results, which is worse.
+
+Reply with exactly one JSON object and nothing else:
+
+{"verdict": "accept" or "reject", "reason": "one sentence"}"""
+
+FINDINGS_HEADER: Final[str] = "Findings from the analysts:"
+
+
 def all_templates() -> tuple[str, ...]:
     """Everything that goes into the prompt template hash."""
     return (
@@ -81,6 +138,11 @@ def all_templates() -> tuple[str, ...]:
         QUESTION_HEADER,
         TRANSCRIPT_HEADER,
         STEP_LIMIT_WARNING,
+        PLANNER_PROMPT,
+        RETRIEVER_PROMPT,
+        SYNTHESIS_PROMPT,
+        VERIFIER_PROMPT,
+        FINDINGS_HEADER,
     )
 
 

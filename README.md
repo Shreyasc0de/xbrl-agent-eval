@@ -40,8 +40,8 @@ This table is generated from `runs/`, not written by hand. `src/report/verify_re
 | Agent A, the single-agent ReAct loop | implemented, not yet run against a model |
 | Run harness and run artifacts | implemented, not yet run against a model |
 | Metrics with Wilson intervals | implemented |
-| Agent B, the multi-agent system | not started |
-| verify_results.py | not started |
+| Agent B, the multi-agent system | implemented, not yet run against a model |
+| verify_results.py | implemented, wired into CI |
 
 Everything marked "not yet run against real data" has been unit-tested against fixtures only. SEC is not reachable from the development sandbox, so the ingest path and question generation are exercised on the host machine.
 
@@ -124,7 +124,12 @@ Then run the benchmark:
 
 ```
 python -m eval.run --system A --model qwen3:4b --limit 100
+python -m eval.run --system B --model qwen3:4b --limit 100
 ```
+
+The two systems share their tools, their answer schema and their abstention wording, and differ only in orchestration. System A is one model in a ReAct loop. System B plans the question into lookups, runs a retriever per lookup, writes the answer from the findings, and has a verifier check it against those findings before accepting it.
+
+The expectation, stated before any run: B costs several times more for an accuracy difference inside the confidence interval. That result is worth publishing either way, which is why cost per correct answer is reported alongside accuracy.
 
 Each run writes `tasks.jsonl`, `metrics.json` and `manifest.json` into its own directory under `runs/`. The task traces keep the raw model output for every step, which is what lets a reader check that a claimed hallucination was a hallucination and not a parse failure.
 

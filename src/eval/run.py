@@ -18,6 +18,7 @@ import click
 
 from agents.prompts import all_templates
 from agents.system_a import SystemA
+from agents.system_b import SystemB
 from agents.tools import FilingStore
 from core.cache import LLMCache
 from core.llm import CachingBackend, OllamaBackend
@@ -28,7 +29,7 @@ __all__ = ["main"]
 
 
 @click.command()
-@click.option("--system", type=click.Choice(["A"]), default="A", show_default=True)
+@click.option("--system", type=click.Choice(["A", "B"]), default="A", show_default=True)
 @click.option("--backend", type=click.Choice(["ollama"]), default="ollama", show_default=True)
 @click.option("--model", default="qwen3:4b", show_default=True)
 @click.option(
@@ -86,7 +87,11 @@ def main(
     caching = CachingBackend(
         OllamaBackend(model, ollama_url), LLMCache(runs_dir / "model-calls.db")
     )
-    agent = SystemA(caching, store, max_steps=max_steps, temperature=temperature, seed=seed)
+    agent: SystemA | SystemB
+    if system == "A":
+        agent = SystemA(caching, store, max_steps=max_steps, temperature=temperature, seed=seed)
+    else:
+        agent = SystemB(caching, store, temperature=temperature, seed=seed)
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_id = f"{stamp}-system{system}-{model.replace(':', '-')}"
