@@ -27,7 +27,7 @@ import zipfile
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import Final, TextIO
 
 __all__ = [
     "REQUIRED_COLUMNS",
@@ -224,22 +224,24 @@ def create_indexes(connection: sqlite3.Connection) -> None:
     connection.commit()
 
 
-def _decode(raw: bytes) -> str:
-    """Decode a DERA member.
+def _open_member(archive: zipfile.ZipFile, name: str) -> TextIO:
+    """Open a DERA member as a text stream, without loading it into memory.
 
-    DERA files are usually UTF-8 but occasionally carry Latin-1 bytes in company
-    names. Falling back on the encoding is safe because it cannot change a
-    numeric value, only how a label is spelled. Any other fallback in this
-    module would not be.
+    num.txt is about 500 MB uncompressed for a single quarter. Reading it whole
+    produced roughly a gigabyte of resident memory between the bytes, the
+    decoded string and the buffer copy, which was enough to push a laptop into
+    swap and stall the load. Streaming keeps it flat.
+
+    Undecodable bytes are replaced rather than raising. DERA files are usually
+    UTF-8 but occasionally carry Latin-1 bytes in a company name, and a
+    replacement character can only change how a label is spelled, never a
+    numeric value. Every other fallback in this module would be unsafe.
     """
-    try:
-        return raw.decode("utf-8")
-    except UnicodeDecodeError:
-        return raw.decode("latin-1")
+    return io.TextIOWrapper(archive.open(name), encoding="utf-8", errors="replace", newline="")
 
 
-def _read_rows(text: str, table: str) -> Iterator[dict[str, str]]:
-    reader = csv.DictReader(io.StringIO(text), delimiter="\t")
+def _read_rows(stream: TextIO, table: str) -> Iterator[dict[str, str]]:
+    reader = csv.DictReader(stream, delimiter="\t")
     header = reader.fieldnames
     if header is None:
         raise ValueError(f"{table}.txt has no header row")
@@ -332,26 +334,27 @@ def load_quarter(
                 raise ValueError(f"{zip_path.name} does not contain {table}.txt")
 
         for table, columns in REQUIRED_COLUMNS.items():
-            text = _decode(archive.read(f"{table}.txt"))
             inserted = ignored = 0
             batch: list[tuple[object, ...]] = []
+            key_columns = _PRIMARY_KEYS[table]
+            value_index = columns.index("value") if "value" in columns else -1
 
-            for row in _read_rows(text, table):
-                key_columns = _PRIMARY_KEYS[table]
-                values = tuple(
-                    _coerce(column, row.get(column), is_key=column in key_columns)
-                    for column in columns
-                )
-                if table == "num" and values[columns.index("value")] is None:
-                    null_values += 1
-                batch.append(values)
-                if len(batch) >= _BATCH_SIZE:
-                    added, skipped = _insert_batch(connection, table, columns, batch)
-                    inserted += added
-                    ignored += skipped
-                    batch.clear()
-                    if progress is not None:
-                        progress(table, inserted + ignored)
+            with _open_member(archive, f"{table}.txt") as stream:
+                for row in _read_rows(stream, table):
+                    values = tuple(
+                        _coerce(column, row.get(column), is_key=column in key_columns)
+                        for column in columns
+                    )
+                    if table == "num" and value_index >= 0 and values[value_index] is None:
+                        null_values += 1
+                    batch.append(values)
+                    if len(batch) >= _BATCH_SIZE:
+                        added, skipped = _insert_batch(connection, table, columns, batch)
+                        inserted += added
+                        ignored += skipped
+                        batch.clear()
+                        if progress is not None:
+                            progress(table, inserted + ignored)
 
             if batch:
                 added, skipped = _insert_batch(connection, table, columns, batch)
