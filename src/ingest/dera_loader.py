@@ -24,7 +24,7 @@ import csv
 import io
 import sqlite3
 import zipfile
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -286,6 +286,15 @@ def _insert_batch(
     columns: Sequence[str],
     batch: list[tuple[object, ...]],
 ) -> tuple[int, int]:
+    """Insert one batch and commit it.
+
+    Committing per batch rather than once per quarter is deliberate. A quarter
+    is several million rows, and deferring the commit builds a write-ahead log
+    close to a gigabyte that is thrown away entirely if the process is
+    interrupted, which on a laptop means any time the machine sleeps. Per-batch
+    commits keep the log small and mean an interrupted load has still made
+    progress.
+    """
     placeholders = ", ".join("?" for _ in columns)
     column_list = ", ".join(columns)
     before = connection.total_changes
@@ -293,11 +302,22 @@ def _insert_batch(
         f"INSERT OR IGNORE INTO {table} ({column_list}) VALUES ({placeholders})", batch
     )
     inserted = connection.total_changes - before
+    connection.commit()
     return inserted, len(batch) - inserted
 
 
-def load_quarter(connection: sqlite3.Connection, zip_path: Path, quarter: str) -> LoadReport:
-    """Load one quarterly DERA ZIP. Returns what it did, per table."""
+def load_quarter(
+    connection: sqlite3.Connection,
+    zip_path: Path,
+    quarter: str,
+    progress: Callable[[str, int], None] | None = None,
+) -> LoadReport:
+    """Load one quarterly DERA ZIP. Returns what it did, per table.
+
+    ``progress`` is called with the table name and rows handled so far. A load
+    of several million rows is otherwise silent for minutes at a time, which
+    makes a stalled run indistinguishable from a slow one.
+    """
     if not zip_path.exists():
         raise FileNotFoundError(f"DERA archive not found: {zip_path}")
 
@@ -330,6 +350,8 @@ def load_quarter(connection: sqlite3.Connection, zip_path: Path, quarter: str) -
                     inserted += added
                     ignored += skipped
                     batch.clear()
+                    if progress is not None:
+                        progress(table, inserted + ignored)
 
             if batch:
                 added, skipped = _insert_batch(connection, table, columns, batch)
@@ -407,7 +429,20 @@ def _cli() -> None:
             archive = client.download(url, destination)
 
             click.echo(f"{quarter}: loading {archive.stat().st_size / 1e6:.0f} MB")
-            report = load_quarter(connection, archive, quarter)
+
+            current_table = ""
+            report_at = 0
+
+            def show(table: str, rows: int) -> None:
+                nonlocal current_table, report_at
+                if table != current_table:
+                    current_table = table
+                    report_at = 0
+                if rows >= report_at:
+                    click.echo(f"  {table}: {rows:,} rows")
+                    report_at = rows + 500_000
+
+            report = load_quarter(connection, archive, quarter, progress=show)
             total += report.total_rows
             click.echo(
                 f"{quarter}: {report.rows_inserted} inserted, "
