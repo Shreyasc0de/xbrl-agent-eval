@@ -218,7 +218,29 @@ def _clean_attributes(el: etree._Element) -> None:
             del el.attrib[name]
 
 
-def strip_ixbrl(source: str) -> str:
+_XML_DECLARATION: Final[re.Pattern[str]] = re.compile(r"^\s*<\?xml[^>]*\?>", re.IGNORECASE)
+
+
+def _parseable(source: str | bytes) -> str | bytes:
+    """Give lxml something it will accept, without changing the encoding story.
+
+    lxml refuses a str that carries an XML encoding declaration, and SEC
+    filings routinely begin with one. There are two cases and they want
+    opposite treatment.
+
+    Bytes pass through untouched, so lxml reads the declaration and decodes
+    accordingly. Encoding a str to bytes instead would throw away the encoding
+    lxml had already resolved, and it silently mangled non-ASCII characters on
+    a second pass, which is how the idempotency test caught it.
+
+    A str has its declaration removed and is parsed as a str.
+    """
+    if isinstance(source, bytes):
+        return source
+    return _XML_DECLARATION.sub("", source, count=1)
+
+
+def strip_ixbrl(source: str | bytes) -> str:
     """Return the filing as a human reader sees it, with all XBRL markup removed.
 
     Idempotent: stripping an already-stripped document returns it unchanged.
@@ -229,7 +251,7 @@ def strip_ixbrl(source: str) -> str:
         raise ValueError("empty document passed to strip_ixbrl")
 
     parser = html.HTMLParser(remove_comments=True, remove_pis=True, huge_tree=True)
-    root = html.document_fromstring(source, parser=parser)
+    root = html.document_fromstring(_parseable(source), parser=parser)
 
     # Pass 1: remove whole subtrees that are never rendered. Iterate over a
     # materialized list because the tree is mutated during the walk.
@@ -301,7 +323,7 @@ def filing_to_text(document: str) -> str:
     assert_no_ixbrl_leak(document)
 
     parser = html.HTMLParser(remove_comments=True, remove_pis=True, huge_tree=True)
-    root = html.document_fromstring(document, parser=parser)
+    root = html.document_fromstring(_parseable(document), parser=parser)
 
     # Source newlines are layout, not structure: a filing wraps a table cell
     # across several lines of HTML for readability. Collapsing them before

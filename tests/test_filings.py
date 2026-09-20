@@ -309,3 +309,74 @@ def test_a_failed_download_leaves_nothing_behind(tmp_path: Path) -> None:
     assert not destination.exists()
     leftovers = list(raw_dir.glob("*.partial")) if raw_dir.exists() else []
     assert leftovers == []
+
+
+# --------------------------------------------------------------------------
+# Regressions found on first contact with real filings
+# --------------------------------------------------------------------------
+
+
+def test_a_filing_with_an_xml_declaration_parses(tmp_path: Path) -> None:
+    """Every one of the first eighty real filings failed on this.
+
+    SEC filings routinely begin with an XML encoding declaration, and lxml
+    refuses a str that carries one. Passing bytes lets lxml read the
+    declaration instead of guessing.
+    """
+    declared = b'<?xml version="1.0" encoding="UTF-8"?>\n' + FIXTURE.read_bytes()
+    transport = RoutingTransport({ref().url: HttpResponse(200, declared)})
+    result = cache_filing(client(tmp_path, transport), ref(), tmp_path / "filings")
+
+    text = Path(result.text_path).read_text(encoding="utf-8")
+    assert "Total net sales" in text
+    assert_no_ixbrl_leak(text)
+
+
+def test_only_filings_the_ground_truth_covers_are_fetched(tmp_path: Path) -> None:
+    """EDGAR lists a company's newest filings, which is not the set the loaded
+
+    quarters cover. Caching documents the answer key knows nothing about would
+    ask the agent about filings it has while grading it against facts drawn
+    from filings it does not.
+    """
+    recent = ref().adsh
+    older = "0000001750-24-000001"
+    transport = RoutingTransport(
+        {
+            submissions_url(1750): ok_json(SUBMISSIONS),
+            "https://data.sec.gov/submissions/CIK0000001750-submissions-001.json": ok_json(OLDER),
+            ref().url: HttpResponse(200, FIXTURE.read_bytes()),
+            primary_document_url(1750, older, "exmp-20231231.htm"): HttpResponse(
+                200, FIXTURE.read_bytes()
+            ),
+        }
+    )
+
+    results = list(
+        cache_filings_for_cik(
+            client(tmp_path, transport),
+            1750,
+            tmp_path / "filings",
+            ("10-K",),
+            only_adsh={older},
+        )
+    )
+    assert len(results) == 1
+    assert not isinstance(results[0], FilingCacheError)
+    assert results[0].adsh == older
+    assert recent not in [r.adsh for r in results if not isinstance(r, FilingCacheError)]
+
+
+def test_an_empty_coverage_set_fetches_nothing(tmp_path: Path) -> None:
+    transport = RoutingTransport(
+        {
+            submissions_url(1750): ok_json(SUBMISSIONS),
+            "https://data.sec.gov/submissions/CIK0000001750-submissions-001.json": ok_json(OLDER),
+        }
+    )
+    results = list(
+        cache_filings_for_cik(
+            client(tmp_path, transport), 1750, tmp_path / "filings", ("10-K",), only_adsh=set()
+        )
+    )
+    assert results == []

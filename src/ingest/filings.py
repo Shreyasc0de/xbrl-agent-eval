@@ -219,7 +219,9 @@ def cache_filing(
     raw = client.get(reference.url)
 
     try:
-        text = filing_to_text(strip_ixbrl(raw.decode("utf-8", errors="replace")))
+        # Bytes, not a decoded string: the document carries its own encoding
+        # declaration and lxml should be the thing that reads it.
+        text = filing_to_text(strip_ixbrl(raw))
     except IXBRLLeakError as error:
         raise FilingCacheError(
             f"{reference.adsh}: XBRL survived preprocessing, refusing to cache it. "
@@ -259,8 +261,17 @@ def cache_filings_for_cik(
     forms: Sequence[str] = DEFAULT_FORMS,
     *,
     limit: int | None = None,
+    only_adsh: set[str] | None = None,
 ) -> Iterator[CachedFiling | FilingCacheError]:
-    """Cache every filing for a company, yielding a result or an error per filing.
+    """Cache filings for a company, yielding a result or an error per filing.
+
+    ``only_adsh`` restricts the fetch to accession numbers that exist in the
+    loaded ground truth. Without it this fetches whatever EDGAR lists most
+    recently, which is not the same set: the database holds the quarters that
+    were loaded, and EDGAR's newest filings can be a year or more later. Caching
+    filings the answer key knows nothing about produces a benchmark where the
+    agent is asked about documents it has and graded against facts drawn from
+    documents it does not.
 
     Errors are yielded rather than raised so that one unparseable filing does
     not abandon the other nineteen companies. The caller decides what an
@@ -272,6 +283,8 @@ def cache_filings_for_cik(
     than be logged as if EDGAR had misbehaved.
     """
     references = list_filings(client, cik, forms)
+    if only_adsh is not None:
+        references = [r for r in references if r.adsh in only_adsh]
     if limit is not None:
         references = references[:limit]
 
@@ -327,8 +340,26 @@ def _cli() -> None:
         except RosterMismatchError as error:
             raise click.ClickException(str(error)) from error
 
-        client = client_from_env(filings_dir / ".http-cache")
         wanted = tuple(form.strip() for form in forms.split(",") if form.strip())
+
+        # The filings the agent may read are exactly the ones the answer key
+        # covers. Anything else would be a document with no facts behind it.
+        covered: dict[int, set[str]] = {
+            company.cik: {
+                submission.adsh
+                for submission in repository.submissions_for_cik(company.cik, wanted)
+            }
+            for company in ROSTER
+        }
+
+        total_covered = sum(len(v) for v in covered.values())
+        click.echo(f"ground truth covers {total_covered} filings across the roster")
+        client = client_from_env(filings_dir / ".http-cache")
+        if total_covered == 0:
+            raise click.ClickException(
+                "no roster filings in the loaded quarters; load the quarters that "
+                "contain the filings you want to benchmark"
+            )
 
         cached = 0
         failures: list[str] = []
@@ -359,7 +390,12 @@ def _cli() -> None:
             for company in ROSTER:
                 click.echo(f"{company.ticker}: fetching")
                 for result in cache_filings_for_cik(
-                    client, company.cik, filings_dir, wanted, limit=limit
+                    client,
+                    company.cik,
+                    filings_dir,
+                    wanted,
+                    limit=limit,
+                    only_adsh=covered[company.cik],
                 ):
                     if isinstance(result, FilingCacheError):
                         failures.append(f"{company.ticker}: {result}")
