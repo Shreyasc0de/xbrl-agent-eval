@@ -58,6 +58,13 @@ __all__ = ["main"]
 @click.option("--temperature", default=0.0, show_default=True)
 @click.option("--seed", default=7, show_default=True)
 @click.option("--ollama-url", default="http://localhost:11434", show_default=True)
+@click.option(
+    "--json-mode/--no-json-mode",
+    default=True,
+    show_default=True,
+    help="Constrain generation to valid JSON. Without it a small model reasons "
+    "aloud until truncated and never emits a parseable answer.",
+)
 def main(
     system: str,
     backend: str,
@@ -70,6 +77,7 @@ def main(
     temperature: float,
     seed: int,
     ollama_url: str,
+    json_mode: bool,
 ) -> None:
     questions = load_questions(questions_path, limit=limit)
     if not questions:
@@ -85,7 +93,8 @@ def main(
 
     store = FilingStore(filings_dir)
     caching = CachingBackend(
-        OllamaBackend(model, ollama_url), LLMCache(runs_dir / "model-calls.db")
+        OllamaBackend(model, ollama_url, json_mode=json_mode),
+        LLMCache(runs_dir / "model-calls.db"),
     )
     agent: SystemA | SystemB
     if system == "A":

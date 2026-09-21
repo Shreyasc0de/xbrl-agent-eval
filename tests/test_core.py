@@ -177,6 +177,53 @@ def test_usage_is_accumulated_across_calls(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 
 
+def test_ollama_constrains_output_to_json_by_default() -> None:
+    """Measured, not assumed.
+
+    On qwen3:4b every call ran to the full token cap producing chain of
+    thought that never contained a JSON object, so every turn failed to parse
+    and every task failed. Setting think to false did not suppress it. The
+    grammar constraint makes the failure impossible rather than discouraged,
+    and a model that cannot emit parseable output would otherwise score zero
+    for reasons that say nothing about reading filings.
+    """
+    from core.llm import OllamaBackend
+
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict[str, object]:
+            return {"response": "{}", "prompt_eval_count": 1, "eval_count": 1}
+
+    def fake_post(url: str, json: dict[str, object], timeout: float) -> FakeResponse:
+        captured.update(json)
+        return FakeResponse()
+
+    import sys
+    import types
+
+    stub = types.ModuleType("requests")
+    stub.post = fake_post  # type: ignore[attr-defined]
+    original = sys.modules.get("requests")
+    sys.modules["requests"] = stub
+    try:
+        OllamaBackend("qwen3:4b").complete("hi", {})
+        assert captured["format"] == "json"
+        assert captured["think"] is False
+
+        captured.clear()
+        OllamaBackend("qwen3:4b", json_mode=False).complete("hi", {})
+        assert "format" not in captured
+    finally:
+        if original is not None:
+            sys.modules["requests"] = original
+        else:
+            del sys.modules["requests"]
+
+
 def test_a_run_that_called_nothing_refuses_to_write_results(tmp_path: Path) -> None:
     """The dangerous failure is not a crash, it is a run that completes having
 

@@ -106,10 +106,20 @@ class ScriptedBackend:
 class OllamaBackend:
     """Local models through Ollama.
 
-    Reachable only from the machine running Ollama. Thinking is disabled and the
-    token budget is capped, because an uncapped small model will happily spend
-    its whole context reasoning aloud and never emit the structured answer the
-    grader needs.
+    Reachable only from the machine running Ollama.
+
+    ``json_mode`` constrains generation to valid JSON at the sampler, and it is
+    on by default because asking nicely does not work. Measured on qwen3:4b:
+    every call ran to exactly the 700 token cap, roughly 34 seconds each,
+    producing chain of thought that was truncated mid-word and never contained
+    a JSON object at all. Setting ``think`` to false did not suppress it. With
+    the grammar constraint the model cannot emit a preamble, so the failure
+    mode is impossible rather than discouraged.
+
+    This matters for what the benchmark measures. A model that never produces
+    parseable output scores zero for reasons that have nothing to do with
+    reading filings, and that result would say more about the harness than
+    about the agent.
 
     Cost is zero and recorded as zero. That is the honest figure for a local
     model and it is what makes the cost-per-correct-answer comparison against a
@@ -123,11 +133,13 @@ class OllamaBackend:
         *,
         timeout_seconds: float = 120.0,
         num_predict: int = 1024,
+        json_mode: bool = True,
     ) -> None:
         self._model_id = model_id
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout_seconds
         self._num_predict = num_predict
+        self._json_mode = json_mode
 
     @property
     def model_id(self) -> str:
@@ -145,13 +157,15 @@ class OllamaBackend:
         if params.get("stop"):
             options["stop"] = params["stop"]
 
-        payload = {
+        payload: dict[str, Any] = {
             "model": self._model_id,
             "prompt": prompt,
             "stream": False,
             "think": False,
             "options": options,
         }
+        if self._json_mode:
+            payload["format"] = "json"
 
         started = time.perf_counter()
         try:
