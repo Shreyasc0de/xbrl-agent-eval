@@ -52,6 +52,8 @@ class DropReason(Enum):
     WRONG_PERIOD_TYPE = "wrong_period_type"
     DUPLICATE_QUESTION = "duplicate_question"
     INSUFFICIENT_PEERS = "insufficient_peers"
+    NO_PRIOR_YEAR_FILING = "no_prior_year_filing"
+    NO_ANNUAL_FILING = "no_annual_filing"
     CONCEPT_PRESENT_IN_FILING = "concept_present_in_filing"
     DENOMINATOR_TOO_SMALL = "denominator_too_small"
 

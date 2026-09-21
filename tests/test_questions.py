@@ -434,6 +434,42 @@ def test_every_answerable_question_has_recomputable_provenance(
             assert question.facts
 
 
+def test_a_company_with_no_annual_filing_is_logged_not_skipped(
+    repository: FactRepository,
+) -> None:
+    """A level that produces nothing and logs nothing is indistinguishable from
+
+    a level that was never run. On the first real question set, L3 and L4 came
+    back empty with no entries at all, and the drop log could not say whether
+    that was the data or a bug.
+    """
+    log = DropLog()
+    list(generate_level_1(repository, ACME_COMPANY, [], log))
+    assert DropReason.NO_ANNUAL_FILING.value in log.counts_by_reason()
+
+
+def test_a_year_with_no_prior_year_filing_is_logged(
+    repository: FactRepository,
+) -> None:
+    """The exact condition that made L3 silently empty: one fiscal year loaded,
+
+    so no year-over-year pair exists.
+    """
+    log = DropLog()
+    one_year = [s for s in submissions(repository, ACME) if s.fy == 2023]
+    list(generate_level_3(repository, ACME_COMPANY, one_year, log))
+    assert DropReason.NO_PRIOR_YEAR_FILING.value in log.counts_by_reason()
+
+
+def test_an_industry_with_too_few_companies_is_logged(
+    repository: FactRepository,
+) -> None:
+    log = DropLog()
+    by_cik = {FIXTURE_COMPANIES[0].cik: submissions(repository, ACME)}
+    list(generate_level_4(repository, FIXTURE_COMPANIES[:1], by_cik, log))
+    assert DropReason.INSUFFICIENT_PEERS.value in log.counts_by_reason()
+
+
 def test_the_drop_log_records_reasons_and_is_written_as_jsonl(
     repository: FactRepository, tmp_path: Path
 ) -> None:

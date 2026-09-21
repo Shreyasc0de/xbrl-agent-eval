@@ -132,7 +132,21 @@ def generate_level_1(
     """Single fact retrieval. One ``num.txt`` row is the answer."""
     template = "L1_single_fact"
 
-    for submission in _annual_submissions(submissions):
+    annual = _annual_submissions(submissions)
+    if not annual:
+        drop_log.record(
+            DropReason.NO_ANNUAL_FILING,
+            level=1,
+            template_id=template,
+            concept="*",
+            cik=company.cik,
+            detail=(
+                "no 10-K in the loaded quarters; this company contributes no "
+                "questions at any level"
+            ),
+        )
+
+    for submission in annual:
         ddate = _ddate_for(submission)
         if ddate is None:
             continue
@@ -309,9 +323,35 @@ def generate_level_3(
     annual = _annual_submissions(submissions)
     by_year = {submission.fy: submission for submission in annual}
 
+    if not annual:
+        drop_log.record(
+            DropReason.NO_ANNUAL_FILING,
+            level=3,
+            template_id=template,
+            concept="*",
+            cik=company.cik,
+            detail="no 10-K in the loaded quarters, so no year-over-year pair exists",
+        )
+        return
+
     for submission in annual:
         prior = by_year.get(submission.fy - 1)
         if prior is None:
+            # Recorded rather than skipped. A level that produces nothing and
+            # logs nothing is indistinguishable from a level that was never
+            # run, and that is exactly the question the drop log exists to
+            # answer.
+            drop_log.record(
+                DropReason.NO_PRIOR_YEAR_FILING,
+                level=3,
+                template_id=template,
+                concept="*",
+                cik=company.cik,
+                adsh=submission.adsh,
+                detail=(
+                    f"FY{submission.fy} has no FY{submission.fy - 1} 10-K in the " "loaded quarters"
+                ),
+            )
             continue
         current_ddate = _ddate_for(submission)
         prior_ddate = _ddate_for(prior)
@@ -420,6 +460,16 @@ def generate_level_4(
     for industry in sorted(by_industry):
         peers = sorted(by_industry[industry], key=lambda c: c.cik)
         if len(peers) < minimum_companies:
+            drop_log.record(
+                DropReason.INSUFFICIENT_PEERS,
+                level=4,
+                template_id=template,
+                concept="*",
+                detail=(
+                    f"{industry} has {len(peers)} roster companies, "
+                    f"fewer than the {minimum_companies} a comparison needs"
+                ),
+            )
             continue
 
         years = sorted(
