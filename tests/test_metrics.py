@@ -186,7 +186,7 @@ def test_cost_per_correct_answer_divides_total_by_correct() -> None:
     assert summary["cost_per_correct_answer_usd"] == pytest.approx(0.20)
 
 
-def test_retrieval_precision_ignores_unanswerable_questions() -> None:
+def test_correct_filing_rate_ignores_unanswerable_questions() -> None:
     """There is no correct filing to open for a concept that is not in one."""
     outcomes = [
         outcome(1, True, opened=True),
@@ -194,8 +194,8 @@ def test_retrieval_precision_ignores_unanswerable_questions() -> None:
         outcome(5, True, opened=False),
     ]
     summary = summarize_run(outcomes)
-    assert summary["retrieval_precision"]["total"] == 2
-    assert summary["retrieval_precision"]["successes"] == 1
+    assert summary["correct_filing_rate"]["total"] == 2
+    assert summary["correct_filing_rate"]["successes"] == 1
 
 
 def test_every_level_appears_even_when_empty() -> None:

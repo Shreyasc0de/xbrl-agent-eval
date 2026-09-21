@@ -1,4 +1,4 @@
-.PHONY: install doctor lint typecheck test check data quarters filings questions clean
+.PHONY: install doctor lint typecheck test check data quarters filings questions passages clean
 
 # The first supported interpreter found. Override with: make install PYTHON=python3.11
 PYTHON ?= $(shell for p in python3.12 python3.11 python3.10; do command -v $$p >/dev/null 2>&1 && echo $$p && break; done)
@@ -19,7 +19,7 @@ install:
 	.venv/bin/pip install --upgrade pip
 	.venv/bin/pip install -e ".[dev]"
 	@echo ""
-	@.venv/bin/python -c "import ingest, questions, agents, eval, core; print('packages importable: ok')"
+	@.venv/bin/python -c "import ingest, questions, annotate, agents, eval, core; print('packages importable: ok')"
 
 # Says what is set up and what is not, without needing the package to import.
 doctor:
@@ -45,6 +45,9 @@ doctor:
 	@if [ -f data/questions/questions.jsonl ]; then \
 		echo "questions:        $$(wc -l < data/questions/questions.jsonl | tr -d ' ')"; \
 	else echo "questions:        missing, run make questions"; fi
+	@if [ -f data/questions/passages.jsonl ]; then \
+		echo "passages:         $$(wc -l < data/questions/passages.jsonl | tr -d ' ') annotated"; \
+	else echo "passages:         missing, run make passages"; fi
 	@if command -v ollama >/dev/null 2>&1; then \
 		echo "ollama:           $$(ollama list 2>/dev/null | tail -n +2 | wc -l | tr -d ' ') model(s)"; \
 	else echo "ollama:           not on PATH"; fi
@@ -74,7 +77,7 @@ check: lint typecheck test
 # database is. They already did once.
 DB ?= $(if $(XBRL_DB),$(XBRL_DB),$(HOME)/xbrl-data/xbrl.db)
 
-data: quarters filings questions
+data: quarters filings questions passages
 
 quarters:
 ifndef QUARTERS
@@ -87,6 +90,9 @@ filings:
 
 questions:
 	python -m questions.generate --db $(DB)
+
+passages:
+	python -m annotate.run
 
 clean:
 	rm -rf .mypy_cache .ruff_cache .pytest_cache htmlcov .coverage

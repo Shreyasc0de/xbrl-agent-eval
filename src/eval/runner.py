@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from agents.system_a import AgentResult
+from annotate.passages import read_annotations
 from core.llm import ModelCallError
 from core.manifest import RunManifest, prompt_template_hash
 from eval.grader import AgentAnswer, AnswerType, ErrorClass, GroundTruth, grade
@@ -48,6 +49,11 @@ class QuestionRecord:
     Deliberately not the generator's ``Question`` type. The runner reads a
     published question set file, which is the same thing a third party would
     read, so a field the file does not carry is a field the runner cannot use.
+
+    ``answer_chunks`` comes from the companion ``passages.jsonl``, which is
+    published the same way. It is ``None``, not empty, when that file does not
+    cover this question: no annotation and no passage found are different facts,
+    and collapsing them would score an agent on a question nobody could pass.
     """
 
     question_id: str
@@ -58,6 +64,7 @@ class QuestionRecord:
     primary_adsh: str
     supporting_adsh: tuple[str, ...]
     concept: str
+    answer_chunks: tuple[str, ...] | None = None
 
     @property
     def ground_truth(self) -> GroundTruth:
@@ -69,6 +76,8 @@ class QuestionRecord:
 
 
 def load_questions(path: Path, limit: int | None = None) -> list[QuestionRecord]:
+    """Load a question set, with passage annotations when they exist beside it."""
+    annotations = read_annotations(path.parent / "passages.jsonl")
     records: list[QuestionRecord] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
@@ -84,6 +93,7 @@ def load_questions(path: Path, limit: int | None = None) -> list[QuestionRecord]
                 primary_adsh=row["primary_adsh"],
                 supporting_adsh=tuple(row.get("supporting_adsh", ())),
                 concept=row.get("concept", ""),
+                answer_chunks=annotations.get(row["question_id"]),
             )
         )
         if limit is not None and len(records) >= limit:
@@ -116,6 +126,7 @@ class TaskRecord:
     filings_opened: list[str]
     chunks_opened: list[str]
     opened_correct_filing: bool
+    opened_answer_passage: bool | None
     steps: list[dict[str, Any]]
 
     def to_json(self) -> dict[str, Any]:
@@ -136,6 +147,7 @@ class TaskRecord:
             "filings_opened": self.filings_opened,
             "chunks_opened": self.chunks_opened,
             "opened_correct_filing": self.opened_correct_filing,
+            "opened_answer_passage": self.opened_answer_passage,
             "steps": self.steps,
         }
 
@@ -164,6 +176,15 @@ def _to_agent_answer(result: AgentResult) -> AgentAnswer:
 
 def _grade_one(question: QuestionRecord, result: AgentResult) -> TaskRecord:
     opened_correct = bool(set(result.filings_opened) & question.answer_bearing_filings)
+
+    # Tri-state on purpose. False means the agent read no passage stating the
+    # figure. None means nobody knows which passage states it, so this task
+    # contributes nothing to the passage metric rather than a zero.
+    opened_passage: bool | None = (
+        None
+        if question.answer_chunks is None
+        else bool(set(result.chunks_opened) & set(question.answer_chunks))
+    )
     steps = [
         {
             "index": step.index,
@@ -195,6 +216,7 @@ def _grade_one(question: QuestionRecord, result: AgentResult) -> TaskRecord:
             filings_opened=result.filings_opened,
             chunks_opened=result.chunks_opened,
             opened_correct_filing=opened_correct,
+            opened_answer_passage=opened_passage,
             steps=steps,
         )
 
@@ -224,6 +246,7 @@ def _grade_one(question: QuestionRecord, result: AgentResult) -> TaskRecord:
             filings_opened=result.filings_opened,
             chunks_opened=result.chunks_opened,
             opened_correct_filing=opened_correct,
+            opened_answer_passage=opened_passage,
             steps=steps,
         )
 
@@ -256,6 +279,7 @@ def _grade_one(question: QuestionRecord, result: AgentResult) -> TaskRecord:
         filings_opened=result.filings_opened,
         chunks_opened=result.chunks_opened,
         opened_correct_filing=opened_correct,
+        opened_answer_passage=opened_passage,
         steps=steps,
     )
 
@@ -279,6 +303,7 @@ def _outcome(record: TaskRecord) -> TaskOutcome:
         tool_calls=record.tool_calls,
         model_calls=record.model_calls,
         opened_correct_filing=record.opened_correct_filing,
+        opened_answer_passage=record.opened_answer_passage,
     )
 
 

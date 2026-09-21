@@ -145,6 +145,7 @@ class TaskOutcome:
     tool_calls: int
     model_calls: int
     opened_correct_filing: bool
+    opened_answer_passage: bool | None = None
 
 
 def summarize_run(outcomes: Sequence[TaskOutcome]) -> dict[str, Any]:
@@ -175,8 +176,25 @@ def summarize_run(outcomes: Sequence[TaskOutcome]) -> dict[str, Any]:
     total_cost = sum(outcome.cost_usd for outcome in outcomes)
     latencies = [outcome.latency_ms for outcome in outcomes]
 
-    retrieval_eligible = [outcome for outcome in graded if outcome.level in (1, 2, 3)]
-    retrieval_hits = sum(1 for outcome in retrieval_eligible if outcome.opened_correct_filing)
+    # Filing-level, and named so. With a roster this small, finding the right
+    # 10-K is a lookup rather than retrieval, so this number sits near 1.0 by
+    # construction and says nothing about whether the agent read the right
+    # passage inside it. Passage-level hits are measured separately.
+    filing_eligible = [outcome for outcome in graded if outcome.level in (1, 2, 3)]
+    filing_hits = sum(1 for outcome in filing_eligible if outcome.opened_correct_filing)
+
+    # The metric that actually moves. Only annotated tasks are eligible: a task
+    # whose answer passage was never located contributes nothing rather than a
+    # zero, so the denominator says how much of the set this number covers.
+    # A hit means the agent read a passage where the figure is printed, not that
+    # it read the right one. See annotate.passages for why that distinction is
+    # stated rather than smoothed over.
+    passage_eligible = [
+        outcome
+        for outcome in graded
+        if outcome.level != 5 and outcome.opened_answer_passage is not None
+    ]
+    passage_hits = sum(1 for outcome in passage_eligible if outcome.opened_answer_passage)
 
     taxonomy = Counter(outcome.error_class for outcome in graded if not outcome.correct)
 
@@ -188,7 +206,11 @@ def summarize_run(outcomes: Sequence[TaskOutcome]) -> dict[str, Any]:
         "accuracy_by_level": by_level,
         "hallucination_rate_l5": rate(hallucinations, len(unanswerable)).to_json(),
         "false_abstention_rate_l1_l4": rate(false_abstentions, len(answerable)).to_json(),
-        "retrieval_precision": rate(retrieval_hits, len(retrieval_eligible)).to_json(),
+        "correct_filing_rate": rate(filing_hits, len(filing_eligible)).to_json(),
+        "passage_hit_rate": (
+            rate(passage_hits, len(passage_eligible)).to_json() if passage_eligible else None
+        ),
+        "passage_annotated": len(passage_eligible),
         "error_taxonomy": dict(sorted(taxonomy.items())),
         "total_cost_usd": round(total_cost, 6),
         "cost_per_correct_answer_usd": (

@@ -18,7 +18,10 @@ import pytest
 SRC = Path(__file__).resolve().parents[1] / "src"
 AGENT_MODULES = sorted((SRC / "agents").glob("*.py"))
 
-FORBIDDEN_ROOTS = {"ingest", "eval", "questions", "sqlite3"}
+# ``annotate`` is on this list for the same reason as ``questions``: it holds
+# the chunk ids that state each answer. An agent that could import it would be
+# scored on reading an answer key rather than on reading a filing.
+FORBIDDEN_ROOTS = {"annotate", "ingest", "eval", "questions", "sqlite3"}
 
 
 def imported_roots(path: Path) -> set[str]:
@@ -48,6 +51,28 @@ def test_no_agent_module_can_reach_the_answer_key(module: Path) -> None:
     offending = imported_roots(module) & FORBIDDEN_ROOTS
     assert not offending, (
         f"{module.name} imports {sorted(offending)}, which crosses the benchmark's " "one boundary"
+    )
+
+
+ANNOTATE_MODULES = sorted((SRC / "annotate").glob("*.py"))
+
+# The annotator is the one module that sees both sides, so it gets its own
+# guard. It may read filing text through the agent tools, but it must never
+# reach the database: if it did, a "passage" could be derived from XBRL rather
+# than found in the text a human reader sees.
+ANNOTATE_FORBIDDEN_ROOTS = {"ingest", "questions", "sqlite3"}
+
+
+def test_there_are_annotate_modules_to_check() -> None:
+    assert ANNOTATE_MODULES, "no modules found under src/annotate/"
+
+
+@pytest.mark.parametrize("module", ANNOTATE_MODULES, ids=lambda p: p.name)
+def test_the_annotator_cannot_reach_the_database(module: Path) -> None:
+    offending = imported_roots(module) & ANNOTATE_FORBIDDEN_ROOTS
+    assert not offending, (
+        f"{module.name} imports {sorted(offending)}; the annotator takes truth "
+        "values as arguments and must not look them up"
     )
 
 

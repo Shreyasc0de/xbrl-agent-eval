@@ -95,6 +95,26 @@ class RunArtifacts:
     outcomes: list[TaskOutcome]
 
 
+def _passage_flag(row: dict[str, Any]) -> bool | None:
+    """Read the tri-state passage flag, keeping absent and false distinct.
+
+    A run recorded before passage annotations existed has no such key at all,
+    and that is not the same as the agent having missed the passage. The value
+    is validated rather than coerced: a row carrying something other than a
+    boolean or null is a corrupt artifact, and defaulting it would let a
+    published number rest on one.
+    """
+    if "opened_answer_passage" not in row:
+        return None
+    value = row["opened_answer_passage"]
+    if value is None or isinstance(value, bool):
+        return value
+    raise ValueError(
+        f"opened_answer_passage must be true, false or null, got {value!r} "
+        f"in task {row.get('question_id')!r}"
+    )
+
+
 def _outcome_from_record(row: dict[str, Any]) -> TaskOutcome:
     return TaskOutcome(
         question_id=row["question_id"],
@@ -107,6 +127,7 @@ def _outcome_from_record(row: dict[str, Any]) -> TaskOutcome:
         tool_calls=int(row["tool_calls"]),
         model_calls=int(row["model_calls"]),
         opened_correct_filing=bool(row["opened_correct_filing"]),
+        opened_answer_passage=_passage_flag(row),
     )
 
 
