@@ -444,6 +444,13 @@ def run_tool(
                 f"{handle.adsh}\t{handle.form}\t{handle.filing_date}\t{handle.company_name}"
                 for handle in handles[:20]
             ]
+            # Naming the next step in the result. A small model that has found
+            # the filing still has to work out that an accession number is what
+            # search_filing wants, and observed behaviour was that it did not.
+            lines.append(
+                "Next: call search_filing with one of these accession numbers "
+                "as adsh, plus a query."
+            )
             return "\n".join(lines), ""
 
         if tool == "search_filing":

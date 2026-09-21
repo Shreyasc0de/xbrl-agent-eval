@@ -108,6 +108,7 @@ class SystemA:
         model_calls = 0
         started = time.perf_counter()
         consecutive_parse_failures = 0
+        seen_calls: set[tuple[str, str]] = set()
 
         for index in range(self._max_steps):
             remaining = self._max_steps - index
@@ -183,6 +184,35 @@ class SystemA:
                 )
 
             arguments = action.arguments or {}
+
+            # A small model with no scratchpad will re-emit its first plausible
+            # action forever. Left alone it burns the whole budget on one call
+            # and the task fails looking like a retrieval problem, which it is
+            # not. Naming the repetition is cheap and turns a silent death
+            # spiral into something the model can act on.
+            signature = (action.tool, _render_arguments(arguments))
+            if signature in seen_calls:
+                repeat_note = (
+                    f"You already called {action.tool} with exactly these arguments "
+                    "and the result is above. Repeating it cannot tell you anything "
+                    "new. Choose a different tool or a different argument, or give "
+                    "your final answer."
+                )
+                steps.append(
+                    Step(
+                        index=index,
+                        raw_output=completion.text,
+                        kind="tool",
+                        tool=action.tool,
+                        arguments=arguments,
+                        error=repeat_note,
+                    )
+                )
+                transcript.append(f"> {action.tool}({_render_arguments(arguments)})")
+                transcript.append(repeat_note)
+                continue
+            seen_calls.add(signature)
+
             observation, tool_error = self._run_tool(
                 action.tool, arguments, filings_opened, chunks_opened
             )

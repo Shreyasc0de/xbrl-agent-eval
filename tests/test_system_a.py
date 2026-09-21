@@ -199,6 +199,58 @@ def test_an_ungradeable_final_answer_fails_the_task(store: FilingStore, tmp_path
     assert result.answer is None
 
 
+def test_a_repeated_tool_call_is_named_rather_than_run_again(
+    store: FilingStore, tmp_path: Path
+) -> None:
+    """Observed on the first real run: qwen3:4b called list_filings, got the
+
+    right answer, then re-emitted the identical call ten times until the budget
+    died. Constraining output to JSON had removed its scratchpad, so it could
+    no longer think between actions. The task failed looking like a retrieval
+    problem, which it was not.
+    """
+    agent = SystemA(backend(tmp_path, SEARCH, SEARCH, ANSWER_4000M), store, max_steps=5)
+    result = agent.answer("q1", "What was revenue?")
+
+    assert not result.failed
+    repeats = [s for s in result.steps if "already called" in s.error]
+    assert len(repeats) == 1
+
+
+def test_a_repeated_call_does_not_consume_the_tool(store: FilingStore, tmp_path: Path) -> None:
+    """The repeat is answered from the transcript, not by running the tool
+
+    again, so a loop costs a model call rather than a tool call.
+    """
+    agent = SystemA(backend(tmp_path, SEARCH, SEARCH, ANSWER_4000M), store, max_steps=5)
+    result = agent.answer("q1", "What was revenue?")
+    observations = [s.observation for s in result.steps if s.observation]
+    assert len(observations) == 1
+
+
+def test_the_action_protocol_offers_a_scratchpad(store: FilingStore) -> None:
+    """JSON mode makes a preamble impossible, which also removes the model's
+
+    ability to reason between actions. A thought field inside the object gives
+    it back without making the output unparseable.
+    """
+    from agents.prompts import ACTION_PROTOCOL
+
+    assert '"thought"' in ACTION_PROTOCOL
+    assert "Never repeat a tool call" in ACTION_PROTOCOL
+
+
+def test_a_thought_field_does_not_break_action_parsing() -> None:
+    from agents.prompts import parse_action
+
+    action = parse_action(
+        '{"thought": "I need the filing first", "tool": "list_filings", '
+        '"arguments": {"company": "Acme"}}'
+    )
+    assert action.kind == "tool"
+    assert action.tool == "list_filings"
+
+
 def test_a_tool_error_is_returned_to_the_model_not_raised(
     store: FilingStore, tmp_path: Path
 ) -> None:

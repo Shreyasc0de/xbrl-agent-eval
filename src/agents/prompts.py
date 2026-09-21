@@ -60,7 +60,14 @@ Reply with exactly one JSON object per turn, and nothing else.
 
 To use a tool:
 
-{{"tool": "<tool name>", "arguments": {{...}}}}
+{{"thought": "one short sentence on why", "tool": "<tool name>", "arguments": {{...}}}}
+
+Look at what you have already done before choosing. Never repeat a tool call
+you have already made: you have the result, so use it and move on.
+
+A normal sequence is: list_filings to find the accession number, then
+search_filing on that accession number to find the passage, then read_section
+on the passage id, then the answer object.
 
 To give your final answer, reply with the answer object described below.
 
