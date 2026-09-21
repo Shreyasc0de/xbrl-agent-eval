@@ -23,7 +23,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Final
 
-from agents.answer import ANSWER_SCHEMA_DESCRIPTION
+from agents.answer import ANSWER_SCHEMA_DESCRIPTION, unwrap_answer_tool
 
 __all__ = [
     "ACTION_PROTOCOL",
@@ -265,6 +265,13 @@ def parse_action(output: str) -> Action:
 
     if not isinstance(payload, dict):
         raise ActionParseError("turn must be a JSON object")
+
+    # A model that has been calling tools all turn often packages its final
+    # answer the same way. The object inside is a complete answer, so it is
+    # routed to the answer branch rather than rejected as an unknown tool.
+    unwrapped = unwrap_answer_tool(payload)
+    if unwrapped is not payload:
+        return Action(kind="answer", payload=unwrapped, raw=output)
 
     has_tool = "tool" in payload and payload["tool"]
     has_answer = "answer_type" in payload

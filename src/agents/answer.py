@@ -20,6 +20,7 @@ from typing import Any, Final
 
 __all__ = [
     "ANSWER_SCHEMA_DESCRIPTION",
+    "unwrap_answer_tool",
     "ParsedAnswer",
     "AnswerParseError",
     "parse_answer",
@@ -35,6 +36,42 @@ _FENCE: Final[re.Pattern[str]] = re.compile(
 )
 
 _VALID_TYPES: Final[frozenset[str]] = frozenset({"numeric", "not_disclosed"})
+
+# Names models reach for when they treat answering as another tool call.
+# Observed on qwen3:4b, which emitted a complete and correct answer object
+# wrapped as {"tool": "answer", "arguments": {...}} and was rejected for it.
+_ANSWER_TOOL_NAMES: Final[frozenset[str]] = frozenset(
+    {"answer", "final_answer", "submit_answer", "give_answer", "respond"}
+)
+
+
+def unwrap_answer_tool(payload: dict[str, Any]) -> dict[str, Any]:
+    """Unwrap an answer the model packaged as a tool call.
+
+    The protocol asks for two different shapes, a tool call and an answer
+    object, and a model that has been calling tools all turn reasonably reaches
+    for the tool shape when it finally has an answer. The object inside is
+    complete and structurally valid.
+
+    Unwrapping it is normalization, not coercion. Nothing about the answer is
+    guessed or repaired: every field still has to be present and valid, and a
+    wrapper carrying anything other than a well-formed answer is left alone to
+    fail as a tool call. Rejecting this would measure whether the model can
+    follow a format, which is not what the benchmark is for.
+    """
+    if payload.get("answer_type") is not None:
+        return payload
+    tool = payload.get("tool")
+    arguments = payload.get("arguments")
+    if (
+        isinstance(tool, str)
+        and tool.strip().lower() in _ANSWER_TOOL_NAMES
+        and isinstance(arguments, dict)
+        and arguments.get("answer_type") is not None
+    ):
+        return arguments
+    return payload
+
 
 _SCALE_WORDS: Final[frozenset[str]] = frozenset(
     {
@@ -184,6 +221,8 @@ def parse_answer(output: str) -> ParsedAnswer:
 
     if not isinstance(payload, dict):
         raise AnswerParseError("answer must be a JSON object")
+
+    payload = unwrap_answer_tool(payload)
 
     answer_type = payload.get("answer_type")
     if not isinstance(answer_type, str):

@@ -25,6 +25,7 @@ retrieval or to reasoning afterwards.
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -150,7 +151,13 @@ class SystemA:
 
             if action.kind == "answer":
                 try:
-                    parsed = parse_answer(action.raw)
+                    # The payload is used when the model wrapped its answer as
+                    # a tool call: the raw text's outermost object is the
+                    # wrapper, and parsing that would fail on a valid answer.
+                    source = (
+                        json.dumps(action.payload) if action.payload is not None else action.raw
+                    )
+                    parsed = parse_answer(source)
                 except AnswerParseError as error:
                     steps.append(
                         Step(
