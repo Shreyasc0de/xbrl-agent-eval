@@ -14,6 +14,7 @@ are skipped. No invented figures are used as a stand-in.
 
 from __future__ import annotations
 
+import math
 from datetime import date
 
 import pytest
@@ -230,27 +231,97 @@ def test_prior_year_comparable_shifts_fiscal_year_only() -> None:
 # Hand-verified figures from actual filings
 # --------------------------------------------------------------------------
 # CLAUDE.md requires these to be read by hand from a real filing, with the
-# source recorded. SEC is not reachable from the development sandbox and no
-# figure here is invented, so the table is empty and these are skipped. The
-# skip reason is load-bearing: it is what stops an empty table from reading as
-# a passing suite.
+# source recorded, and checked against what the answer key would serve. This is
+# the only test in the suite that can catch a whole class of error the rest
+# cannot: every other test compares the pipeline against itself or against a
+# fixture the same code wrote, so a systematic misreading of DERA would pass
+# all of them. A human reading a printed statement is the only independent
+# check available.
+#
+# Two skip conditions, kept apart on purpose. An empty table is unfinished
+# work. A missing database is an environment without ground truth loaded, such
+# as CI. Collapsing them would let an empty table hide behind "no database
+# here", which is the specific way this test could rot into decoration.
 
-HAND_VERIFIED_FACTS: list[tuple[str, str, str, float, str, int]] = [
-    # (adsh, tag, uom, expected_base_units, source_note, qtrs)
+# (adsh, tag, uom, ddate, qtrs, expected_base_units, source_note)
+#
+# ddate and qtrs are not optional. A 10-K states the prior year alongside the
+# current one, so adsh and tag alone identify two different figures, and the
+# wrong one looks entirely plausible.
+HAND_VERIFIED_FACTS: list[tuple[str, str, str, int, int, float, str]] = [
+    # Example of the shape, kept commented out because it is not verified:
+    # (
+    #     "0000320193-24-000123",
+    #     "CashAndCashEquivalentsAtCarryingValue",
+    #     "USD",
+    #     20240928,
+    #     0,
+    #     29_943_000_000.0,
+    #     "Apple FY2024 10-K, consolidated balance sheet, in millions",
+    # ),
 ]
 
 
+def _ground_truth_available() -> bool:
+    from core.paths import default_db_path
+
+    return default_db_path().exists()
+
+
+@pytest.mark.needs_ground_truth
+# Order matters. pytest reports the condition closest to the function, and the
+# empty table is the one that must be visible: "no database here" is a fact
+# about the machine, while "no figures recorded" is unfinished work.
+@pytest.mark.skipif(
+    not _ground_truth_available(),
+    reason="No ground truth database on this machine. Run on the host after make quarters.",
+)
 @pytest.mark.skipif(
     not HAND_VERIFIED_FACTS,
     reason="No hand-verified filing figures recorded yet. NOT a passing test.",
 )
 @pytest.mark.parametrize(
-    ("adsh", "tag", "uom", "expected", "source_note", "qtrs"),
+    ("adsh", "tag", "uom", "ddate", "qtrs", "expected", "source_note"),
     HAND_VERIFIED_FACTS,
 )
 def test_hand_verified_fact_matches_the_answer_key(
-    adsh: str, tag: str, uom: str, expected: float, source_note: str, qtrs: int
+    adsh: str, tag: str, uom: str, ddate: int, qtrs: int, expected: float, source_note: str
 ) -> None:
-    raise NotImplementedError(
-        "Wire this to the SQLite ground truth once a quarter has been loaded on the host."
+    """A figure read by eye off the filing equals what the answer key serves.
+
+    Consolidated rows only. The first real load stored dimensional breakdowns
+    under the same key as consolidated totals, which turned one company's
+    revenue into the revenue of a single hotel category. A hand-verified figure
+    that did not filter on segments would reproduce that bug rather than catch
+    it.
+    """
+    import sqlite3
+
+    from core.paths import default_db_path
+    from eval.grader import EXACT_ABSOLUTE_TOLERANCE
+
+    connection = sqlite3.connect(default_db_path())
+    try:
+        rows = connection.execute(
+            "SELECT value FROM num "
+            "WHERE adsh = ? AND tag = ? AND uom = ? AND ddate = ? AND qtrs = ? "
+            "AND coreg = '' AND segments = ''",
+            (adsh, tag, uom, ddate, qtrs),
+        ).fetchall()
+    finally:
+        connection.close()
+
+    assert rows, (
+        f"no consolidated fact for {tag} in {adsh} at ddate {ddate} qtrs {qtrs}. "
+        f"Source: {source_note}"
     )
+    assert len(rows) == 1, (
+        f"{len(rows)} consolidated facts match {tag} in {adsh} at ddate {ddate} "
+        f"qtrs {qtrs}; a hand-verified figure must identify exactly one row"
+    )
+
+    stored = rows[0][0]
+    assert stored is not None, f"the answer key stores NULL for {tag} in {adsh}"
+    assert math.isclose(
+        float(stored), expected, rel_tol=0.0, abs_tol=EXACT_ABSOLUTE_TOLERANCE
+    ), f"answer key says {stored!r}, the filing says {expected!r}. Source: {source_note}"

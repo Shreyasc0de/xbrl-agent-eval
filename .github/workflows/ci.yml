@@ -21,7 +21,7 @@ jobs:
       - run: ruff check src tests
       - run: ruff format --check src tests
       - run: mypy
-      - run: pytest -m "not needs_network"
+      - run: pytest -m "not needs_network and not needs_ground_truth"
 
   verify-results:
     runs-on: ubuntu-latest

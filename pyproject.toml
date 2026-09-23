@@ -46,6 +46,7 @@ testpaths = ["tests"]
 addopts = "-ra --strict-markers"
 markers = [
     "needs_network: requires live SEC access, not run in CI or in the dev sandbox",
+    "needs_ground_truth: requires a loaded XBRL database, so it runs on the host, not in CI",
 ]
 
 [tool.ruff]
