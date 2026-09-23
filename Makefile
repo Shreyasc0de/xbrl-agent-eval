@@ -1,4 +1,4 @@
-.PHONY: install doctor lint typecheck test check data quarters filings questions passages clean
+.PHONY: install doctor lint typecheck test check data quarters filings questions passages results clean
 
 # The first supported interpreter found. Override with: make install PYTHON=python3.11
 PYTHON ?= $(shell for p in python3.12 python3.11 python3.10; do command -v $$p >/dev/null 2>&1 && echo $$p && break; done)
@@ -93,6 +93,9 @@ questions:
 
 passages:
 	python -m annotate.run
+
+results:
+	python -m report.verify_results --write
 
 clean:
 	rm -rf .mypy_cache .ruff_cache .pytest_cache htmlcov .coverage

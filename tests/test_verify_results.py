@@ -320,3 +320,71 @@ def test_verification_error_is_raised_for_broken_artifacts(repo: Path) -> None:
     (repo / "runs" / RUN_ID / "tasks.jsonl").unlink()
     with pytest.raises(VerificationError):
         load_runs(repo / "runs")
+
+
+# --------------------------------------------------------------------------
+# The writer
+# --------------------------------------------------------------------------
+# The README claims its results table is generated rather than hand-written.
+# These tests are what make that claim true rather than prose.
+
+
+def test_writing_the_table_makes_a_stale_readme_verify(repo: Path) -> None:
+    from report.verify_results import write_results_table
+
+    readme = repo / "README.md"
+    readme.write_text(
+        f"# x\n\n{RESULTS_BEGIN}\n| stale | nonsense |\n|---|---|\n{RESULTS_END}\n",
+        encoding="utf-8",
+    )
+    assert problems(repo), "a stale table should fail verification before the rewrite"
+
+    assert write_results_table(readme, load_runs(repo / "runs")) is True
+    assert problems(repo) == []
+
+
+def test_writing_an_already_current_table_changes_nothing(repo: Path) -> None:
+    """Idempotent, so running it in a loop or a hook cannot churn the file."""
+    from report.verify_results import write_results_table
+
+    readme = repo / "README.md"
+    before = readme.read_text(encoding="utf-8")
+    assert write_results_table(readme, load_runs(repo / "runs")) is False
+    assert readme.read_text(encoding="utf-8") == before
+
+
+def test_the_writer_refuses_a_readme_with_no_markers(repo: Path) -> None:
+    from report.verify_results import write_results_table
+
+    readme = repo / "README.md"
+    readme.write_text("# x\n\nno markers here\n", encoding="utf-8")
+    with pytest.raises(VerificationError):
+        write_results_table(readme, load_runs(repo / "runs"))
+
+
+def test_write_mode_refuses_when_the_artifacts_themselves_disagree(repo: Path) -> None:
+    """The writer must not launder a corrupt artifact into the README.
+
+    Regenerating the table from a metrics.json that disagrees with its own task
+    records would produce a README that verifies against a number nothing
+    supports, which is the exact failure the checker exists to prevent.
+    """
+    from report.verify_results import main
+
+    metrics_path = repo / "runs" / RUN_ID / "metrics.json"
+    metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+    metrics["accuracy_overall"]["point"] = 0.99
+    metrics_path.write_text(json.dumps(metrics, indent=2, sort_keys=True), encoding="utf-8")
+
+    before = (repo / "README.md").read_text(encoding="utf-8")
+    assert main([str(repo), "--write"]) == 1
+    assert (repo / "README.md").read_text(encoding="utf-8") == before
+
+
+def test_the_table_reports_passage_coverage_rather_than_a_bare_rate(repo: Path) -> None:
+    """A hit rate with no denominator hides how much of the set it covers."""
+    table = render_results_table(load_runs(repo / "runs"))
+    assert "Passage hit rate" in table
+    # These tasks carry no passage annotation, so the cell must say so rather
+    # than print a rate computed over nothing.
+    assert "not annotated" in table

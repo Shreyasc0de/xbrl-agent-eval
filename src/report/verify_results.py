@@ -41,6 +41,7 @@ __all__ = [
     "load_runs",
     "recompute_metrics",
     "render_results_table",
+    "write_results_table",
     "verify",
 ]
 
@@ -237,11 +238,11 @@ def render_results_table(runs: list[RunArtifacts]) -> str:
     """
     header = (
         "| System | Backend | Model | Graded | Accuracy | "
-        "L5 hallucination rate | Cost per correct |\n"
-        "|---|---|---|---|---|---|---|"
+        "L5 hallucination rate | Passage hit rate | Cost per correct |\n"
+        "|---|---|---|---|---|---|---|---|"
     )
     if not runs:
-        return f"{header}\n| _(no runs yet)_ | | | | | | |"
+        return f"{header}\n| _(no runs yet)_ | | | | | | | |"
 
     rows = []
     for run in sorted(runs, key=lambda r: r.run_id):
@@ -249,6 +250,20 @@ def render_results_table(runs: list[RunArtifacts]) -> str:
         accuracy = metrics["accuracy_overall"]
         hallucination = metrics["hallucination_rate_l5"]
         cost = metrics["cost_per_correct_answer_usd"]
+        passage = metrics["passage_hit_rate"]
+        # A run made before passage annotations existed says so, rather than
+        # showing a rate computed over nothing. The denominator is printed
+        # because a hit rate over nine questions is not the same claim as one
+        # over six hundred, and a bare percentage hides which it is.
+        passage_cell = (
+            "not annotated"
+            if passage is None
+            else (
+                f"{passage['point']:.1%} "
+                f"[{passage['ci95_low']:.1%}, {passage['ci95_high']:.1%}] "
+                f"(n={passage['total']})"
+            )
+        )
         rows.append(
             f"| {run.manifest['system']} "
             f"| {run.manifest['backend']} "
@@ -258,6 +273,7 @@ def render_results_table(runs: list[RunArtifacts]) -> str:
             f"[{accuracy['ci95_low']:.1%}, {accuracy['ci95_high']:.1%}] "
             f"| {hallucination['point']:.1%} "
             f"[{hallucination['ci95_low']:.1%}, {hallucination['ci95_high']:.1%}] "
+            f"| {passage_cell} "
             f"| {'n/a' if cost is None else f'${cost:.4f}'} |"
         )
     return "\n".join([header, *rows])
@@ -344,9 +360,61 @@ def verify(root: Path) -> tuple[list[str], list[RunArtifacts]]:
     return problems, runs
 
 
+def write_results_table(readme: Path, runs: list[RunArtifacts]) -> bool:
+    """Replace the README's results block with the table generated from runs/.
+
+    Returns whether the file changed. This is the other half of the check: the
+    README claims the table is generated rather than hand-written, and until
+    something generated it that claim was prose. Both sides call
+    ``render_results_table``, so the writer cannot produce a table the verifier
+    would reject.
+    """
+    text = readme.read_text(encoding="utf-8")
+    start = text.find(RESULTS_BEGIN)
+    end = text.find(RESULTS_END)
+    if start < 0 or end < 0:
+        raise VerificationError(
+            f"{readme.name} has no {RESULTS_BEGIN} / {RESULTS_END} markers to write between"
+        )
+
+    table = render_results_table(runs).strip()
+    updated = f"{text[: start + len(RESULTS_BEGIN)]}\n{table}\n{text[end:]}"
+    if updated == text:
+        return False
+    readme.write_text(updated, encoding="utf-8")
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
-    root = Path(argv[0]) if argv else Path.cwd()
+    arguments = list(argv or [])
+    write = "--write" in arguments
+    if write:
+        arguments.remove("--write")
+    root = Path(arguments[0]) if arguments else Path.cwd()
+
     problems, runs = verify(root)
+
+    if write:
+        # Only the README's own table may be stale in write mode. A metrics
+        # file that disagrees with its task records is a corrupt artifact, and
+        # regenerating the table from it would launder that into the README.
+        artifact_problems = [
+            problem for problem in problems if not problem.startswith("README.md:")
+        ]
+        if artifact_problems:
+            print(
+                "verify_results: refusing to write; the artifacts themselves " "do not check out\n",
+                file=sys.stderr,
+            )
+            for problem in artifact_problems:
+                print(f"  - {problem}", file=sys.stderr)
+            return 1
+        changed = write_results_table(root / "README.md", runs)
+        print(
+            f"verify_results: README results table {'rewritten' if changed else 'already current'}"
+            f" from {len(runs)} run(s)"
+        )
+        return 0
 
     if problems:
         print(f"verify_results: {len(problems)} problem(s)\n", file=sys.stderr)

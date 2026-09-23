@@ -6,46 +6,48 @@ The benchmark rests on one asymmetry: **ground truth comes from structured XBRL,
 
 ## Results
 
-**No runs have been executed yet. This table is empty by design and will be populated only from artifacts under `runs/`.**
+**This table is empty. Runs have been executed against a local model, but none has produced a result worth publishing: the question set is 94 questions covering three of five levels, and committing a headline number computed from it would overstate what has been measured.**
 
 Per the evidence rules in `CLAUDE.md`, no number appears here until it is computed from a real run and checked by `src/report/verify_results.py` in CI. Placeholder and illustrative values are not written to this file.
 
 <!-- results:begin -->
-| System | Backend | Model | Graded | Accuracy | L5 hallucination rate | Cost per correct |
-|---|---|---|---|---|---|---|
-| _(no runs yet)_ | | | | | | |
+| System | Backend | Model | Graded | Accuracy | L5 hallucination rate | Passage hit rate | Cost per correct |
+|---|---|---|---|---|---|---|---|
+| _(no runs yet)_ | | | | | | | |
 <!-- results:end -->
 
 This table is generated from `runs/`, not written by hand. `src/report/verify_results.py` regenerates it from the raw task records and fails the build if it differs, so it cannot drift away from the runs behind it. A number quoted in prose carries a claim marker naming the run and metric it came from, and is checked the same way.
 
 ## Status
 
+Machinery is complete and has been run against real SEC data. No benchmark run has produced a publishable result yet, because the question set is still too small to be worth publishing.
+
 | Component | State |
 |---|---|
 | Repo scaffold, tooling, CI | in place |
-| Runnable data pull (`make data`) | in place, not yet run against SEC |
-| `test_no_ixbrl_leak.py` | written, passing |
-| `test_normalizers.py` | mechanical cases passing; hand-verified-figure cases skipped pending real filing figures |
-| `test_grader.py` | written, passing |
-| iXBRL stripper and text conversion | implemented |
-| DERA loader and its CLI | implemented, not yet run against real data |
-| EDGAR fetcher | implemented, not yet run against real data |
-| Filing fetch, strip and cache pipeline | implemented, not yet run against real data |
-| Question generation (L1 to L5) | implemented, not yet run against real data |
+| iXBRL stripper and text conversion | implemented, run against real filings |
+| DERA loader and its CLI | implemented, run against real quarters |
+| EDGAR fetcher | implemented, run against SEC |
+| Filing fetch, strip and cache pipeline | implemented, run against SEC |
+| Company roster | 20 companies, all CIKs verified against loaded data |
+| Question generation (L1 to L5) | implemented, run; output below the target set size |
 | Drop log and question set serialization | implemented |
-| Company roster | proposed, CIKs unverified until checked against loaded data |
-| Model call cache, run manifest, backend interface | implemented |
-| Agent tools over the filing cache | implemented |
-| Structured answer parsing | implemented |
-| Agent A, the single-agent ReAct loop | implemented, not yet run against a model |
-| Run harness and run artifacts | implemented, not yet run against a model |
-| Metrics with Wilson intervals | implemented |
+| Passage annotator (`src/annotate/`) | implemented, not yet run |
+| Model call cache, run manifest, backend interface | implemented, exercised by real runs |
+| Agent tools over the filing cache | implemented, exercised by real runs |
+| Structured answer parsing | implemented, exercised by real runs |
+| Agent A, the single-agent ReAct loop | implemented, run against a local model |
 | Agent B, the multi-agent system | implemented, not yet run against a model |
-| verify_results.py | implemented, wired into CI |
+| Run harness and run artifacts | implemented, run |
+| Metrics with Wilson intervals | implemented |
+| `test_no_ixbrl_leak.py` | written, passing |
+| `test_grader.py` | written, passing |
+| `test_normalizers.py` | mechanical cases passing; hand-verified-figure cases skipped, see below |
+| `verify_results.py` | implemented, wired into CI, generates the results table |
 
-Everything marked "not yet run against real data" has been unit-tested against fixtures only. SEC is not reachable from the development sandbox, so the ingest path and question generation are exercised on the host machine.
+The skipped cases in `test_normalizers.py` are the one place the suite is knowingly incomplete. They require figures read by hand off a real filing with the source recorded, and the table of them is empty. The skip reason says so, which is what stops an empty table from reading as a passing suite.
 
-No question set has been generated. The spec's Week 2 exit criterion, 600 or more validated questions with a dropped-question log, is not met and will not be until the DERA quarters are loaded and `python -m questions.generate` is run.
+The spec's Week 2 exit criterion, 600 or more validated questions with a dropped-question log, is not met. Two quarters of DERA data yield 94 questions across levels 1, 2 and 5, because only four of the twenty companies filed an annual report inside that window and levels 3 and 4 need a prior-year filing to compare against. That is a data coverage limit rather than a generator limit, and it is why the quarter range in the command below is eight quarters rather than two.
 
 ## Architecture
 
@@ -53,13 +55,18 @@ No question set has been generated. The spec's Week 2 exit criterion, 600 or mor
 src/
   ingest/      DERA loader, EDGAR fetcher, iXBRL stripper
   questions/   generators per difficulty level, filters, validation
+  annotate/    which passages of a filing state each answer
   agents/      system_a.py (single agent), system_b.py (multi-agent), tools.py
   eval/        grader, normalizers, metrics, error taxonomy
   report/      figures, tables, verify_results.py
   core/        run manifests, LLM call cache, rate-limited HTTP client
 ```
 
-The boundary is checked structurally. `tests/test_agent_boundary.py` parses every module under `src/agents/` and fails the build if any of them imports `ingest`, `eval`, `questions` or `sqlite3`. A comment saying the modules must stay separate is not an invariant; an import graph checked on every commit is.
+The boundary is checked structurally. `tests/test_agent_boundary.py` parses every module under `src/agents/` and fails the build if any of them imports `ingest`, `eval`, `questions`, `annotate` or `sqlite3`. A comment saying the modules must stay separate is not an invariant; an import graph checked on every commit is.
+
+`annotate/` is the one package that sees both sides, so it has a guard of its own. It is handed truth values as plain floats and filing text as strings, and the same test fails the build if it imports the database or the question repository. It exists because filing-level retrieval scoring is close to meaningless here: with twenty companies, finding the right 10-K is a lookup, and that metric sits near 1.0 whatever the agent does. It is reported as `correct_filing_rate`, named for what it measures. `passage_hit_rate` is the number that moves, and it counts a task only when the passage stating its answer was located, so the table prints the denominator alongside the rate.
+
+A passage hit means the agent read a passage where the figure appears, not that it read the right one. A figure printed in both a note and the statement it rolls into annotates both, and the agent gets credit for either. That is a deliberate overcount rather than an undercount: the alternative penalizes an agent for reading a correct passage that happened not to be the one the annotator picked.
 
 Every rate is reported with a 95% Wilson interval rather than as a point estimate. Per-level sample sizes are small, and the difference between 68% and 73% on a hundred questions is not a difference. Wilson rather than the normal approximation because the normal interval misbehaves exactly where this benchmark lives: small samples and proportions near zero, where it can include negative numbers.
 
@@ -69,7 +76,7 @@ Retrieval is deterministic lexical scoring, BM25 over fixed overlapping chunks, 
 
 `src/core/` is a deliberate addition to the layout in `docs/SPEC.md`. It holds the run infrastructure that both `agents/` and `report/` need, specifically the content-addressed model call cache and the run manifest writer. Keeping it separate is what lets `agents/` stay free of imports from `eval/` and `ingest/`.
 
-The boundary invariant in code: agent tools read from `data/filings/`, the grader reads from `data/xbrl.db`, and no module imports from both.
+The boundary invariant in code: agent tools read cached filing text, the grader reads the XBRL database, and no module imports from both. Both live outside the repository by default, under `~/xbrl-data/`.
 
 ## Setup
 
@@ -99,6 +106,7 @@ env file:         .env present
 ground truth:     missing, run make quarters
 filings:          missing, run make filings
 questions:        missing, run make questions
+passages:         missing, run make passages
 ollama:           2 model(s)
 ```
 
@@ -112,13 +120,16 @@ The database lives outside the repository by default, at `~/xbrl-data/xbrl.db`. 
 make data QUARTERS=2023q1,2023q2,2023q3,2023q4,2024q1,2024q2,2024q3,2024q4
 ```
 
-That runs three stages in order, and each can also be run on its own:
+That runs four stages in order, and each can also be run on its own:
 
 ```
 python -m ingest.dera_loader --quarters 2024q3,2024q4 --db ~/xbrl-data/xbrl.db
 python -m ingest.filings --db ~/xbrl-data/xbrl.db
 python -m questions.generate --db ~/xbrl-data/xbrl.db
+python -m annotate.run
 ```
+
+The fourth stage records which passages of each cached filing state each answer, which is what `passage_hit_rate` is scored against. It reads the generated questions as JSON and the filings as text, and touches no database.
 
 Then run the benchmark:
 
@@ -130,6 +141,8 @@ python -m eval.run --system B --model qwen3:4b --limit 100
 The two systems share their tools, their answer schema and their abstention wording, and differ only in orchestration. System A is one model in a ReAct loop. System B plans the question into lookups, runs a retriever per lookup, writes the answer from the findings, and has a verifier check it against those findings before accepting it.
 
 The expectation, stated before any run: B costs several times more for an accuracy difference inside the confidence interval. That result is worth publishing either way, which is why cost per correct answer is reported alongside accuracy.
+
+`make results` regenerates the README table from whatever is under `runs/` and refuses to write if any run's `metrics.json` disagrees with its own task records, so the table cannot be used to launder a corrupt artifact.
 
 Each run writes `tasks.jsonl`, `metrics.json` and `manifest.json` into its own directory under `runs/`. The task traces keep the raw model output for every step, which is what lets a reader check that a claimed hallucination was a hallucination and not a parse failure.
 
