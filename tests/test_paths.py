@@ -101,3 +101,34 @@ def test_every_source_package_is_type_checked_in_ci() -> None:
         if path.is_dir() and (path / "__init__.py").exists()
     }
     assert on_disk <= declared, f"not type checked in CI: {sorted(on_disk - declared)}"
+
+
+def test_the_makefile_never_looks_for_data_inside_the_checkout() -> None:
+    """The same divergence as above, one level down.
+
+    ``make doctor`` checked ``data/filings/`` and ``data/questions/`` in the
+    repository while the pipeline writes both beside the database, so it
+    reported them missing when they existed. It stayed invisible because
+    doctor only ever prints: nothing fails when a status line lies.
+    """
+    import re
+    from pathlib import Path
+
+    makefile = (Path(__file__).resolve().parents[1] / "Makefile").read_text(encoding="utf-8")
+    # The hyphen in the lookbehind matters: the default database path is
+    # ~/xbrl-data/xbrl.db, which is outside the checkout and must not match.
+    pattern = re.compile(r"(?<![\w/$(){}-])data/(filings|questions|xbrl\.db)")
+    offending = [
+        line
+        for line in makefile.splitlines()
+        if not line.lstrip().startswith("#") and pattern.search(line)
+    ]
+    # A guard that cannot fail is not a guard. These are the exact line the
+    # bug was, and the exact line it must not flag.
+    assert pattern.search("\t@if [ -f data/filings/manifest.jsonl ]; then \\")
+    assert not pattern.search("DB ?= $(HOME)/xbrl-data/xbrl.db")
+
+    assert not offending, (
+        "the Makefile points at data/ inside the checkout; it must derive "
+        f"these from DB, as core.paths does: {offending}"
+    )
