@@ -59,6 +59,9 @@ doctor:
 	@if [ -f "$(DB)" ]; then \
 		echo "ground truth:     $(DB) ($$(du -h "$(DB)" | cut -f1))"; \
 	else echo "ground truth:     missing at $(DB), run make quarters"; fi
+	@if [ -f "$(DB)" ] && command -v sqlite3 >/dev/null 2>&1; then \
+		echo "quarters loaded:  $$(sqlite3 "$(DB)" "SELECT IFNULL(GROUP_CONCAT(q, ','), 'none') FROM (SELECT DISTINCT quarter AS q FROM load_log ORDER BY quarter)" 2>/dev/null)"; \
+	fi
 	@if [ -f "$(DATA_DIR)filings/manifest.jsonl" ]; then \
 		echo "filings:          $$(wc -l < "$(DATA_DIR)filings/manifest.jsonl" | tr -d ' ') cached"; \
 	else echo "filings:          missing at $(DATA_DIR)filings, run make filings"; fi
