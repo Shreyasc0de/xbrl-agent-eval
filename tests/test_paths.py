@@ -71,3 +71,33 @@ def test_every_entry_point_uses_the_shared_default() -> None:
             f"{module.__name__} hard-codes a database path instead of using "
             "core.paths.default_db_path"
         )
+
+
+def test_every_source_package_is_type_checked_in_ci() -> None:
+    """CI runs a bare ``mypy``, which checks only the packages listed in config.
+
+    A package missing from that list is silently unchecked: it passes locally
+    under ``mypy --strict src`` and is skipped entirely on every push. That is
+    how ``annotate`` went a commit without type checking.
+
+    Read with a regex rather than tomllib, which is 3.11 and up while this
+    project supports 3.10. A test that cannot run on the oldest supported
+    interpreter does not guard the build on it.
+    """
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    text = (root / "pyproject.toml").read_text(encoding="utf-8")
+    section = text.split("[tool.mypy]", 1)
+    assert len(section) == 2, "pyproject.toml has no [tool.mypy] section"
+    match = re.search(r"^packages\s*=\s*\[(.*?)\]", section[1], re.MULTILINE | re.DOTALL)
+    assert match, "[tool.mypy] declares no packages list"
+    declared = set(re.findall(r'"([^"]+)"', match.group(1)))
+
+    on_disk = {
+        path.name
+        for path in (root / "src").iterdir()
+        if path.is_dir() and (path / "__init__.py").exists()
+    }
+    assert on_disk <= declared, f"not type checked in CI: {sorted(on_disk - declared)}"

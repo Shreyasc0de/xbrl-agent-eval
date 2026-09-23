@@ -63,7 +63,7 @@ ignore = ["E501"]
 [tool.mypy]
 python_version = "3.10"
 mypy_path = "src"
-packages = ["ingest", "questions", "agents", "eval", "report", "core"]
+packages = ["ingest", "questions", "annotate", "agents", "eval", "report", "core"]
 strict = true
 warn_unreachable = true
 disallow_any_generics = true
