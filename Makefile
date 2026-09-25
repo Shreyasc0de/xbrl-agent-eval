@@ -60,7 +60,12 @@ doctor:
 		echo "ground truth:     $(DB) ($$(du -h "$(DB)" | cut -f1))"; \
 	else echo "ground truth:     missing at $(DB), run make quarters"; fi
 	@if [ -f "$(DB)" ] && command -v sqlite3 >/dev/null 2>&1; then \
-		echo "quarters loaded:  $$(sqlite3 "$(DB)" "SELECT IFNULL(GROUP_CONCAT(q, ','), 'none') FROM (SELECT DISTINCT quarter AS q FROM load_log ORDER BY quarter)" 2>/dev/null)"; \
+		q=$$(sqlite3 -cmd ".timeout 2000" "$(DB)" "SELECT IFNULL(GROUP_CONCAT(q, ','), 'none') FROM (SELECT DISTINCT quarter AS q FROM load_log ORDER BY quarter)" 2>/dev/null); \
+		if [ -n "$$q" ]; then \
+			echo "quarters loaded:  $$q"; \
+		else \
+			echo "quarters loaded:  cannot read, database is busy (a load is probably running)"; \
+		fi; \
 	fi
 	@if [ -f "$(DATA_DIR)filings/manifest.jsonl" ]; then \
 		echo "filings:          $$(wc -l < "$(DATA_DIR)filings/manifest.jsonl" | tr -d ' ') cached"; \
