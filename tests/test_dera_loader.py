@@ -294,3 +294,58 @@ def test_a_database_from_an_older_loader_is_refused(tmp_path: Path) -> None:
 
     with pytest.raises(SchemaVersionError, match="silently wrong"):
         create_schema(connection)
+
+
+# --------------------------------------------------------------------------
+# Resuming an interrupted load
+# --------------------------------------------------------------------------
+
+
+def test_a_fully_loaded_quarter_is_recognized(tmp_path: Path) -> None:
+    from ingest.dera_loader import REQUIRED_COLUMNS, fully_loaded_quarters
+
+    connection = open_database(tmp_path / "x.db")
+    create_schema(connection)
+    for table in REQUIRED_COLUMNS:
+        connection.execute(
+            "INSERT INTO load_log (quarter, tbl, rows_inserted, duplicates_ignored) "
+            "VALUES ('2024q1', ?, 1, 0)",
+            (table,),
+        )
+    connection.commit()
+    assert fully_loaded_quarters(connection) == {"2024q1"}
+    connection.close()
+
+
+def test_a_quarter_killed_partway_is_not_treated_as_loaded(tmp_path: Path) -> None:
+    """The failure this exists for.
+
+    A load writes one log row per table as that table finishes, so a run killed
+    mid-quarter leaves some of them. Counting that quarter as done would leave
+    the database quietly missing facts, and the question generator would then
+    drop questions citing a reason that is not the real one.
+    """
+    from ingest.dera_loader import REQUIRED_COLUMNS, fully_loaded_quarters
+
+    connection = open_database(tmp_path / "x.db")
+    create_schema(connection)
+    partial = sorted(REQUIRED_COLUMNS)[:-1]
+    assert partial, "the fixture needs at least one table to leave out"
+    for table in partial:
+        connection.execute(
+            "INSERT INTO load_log (quarter, tbl, rows_inserted, duplicates_ignored) "
+            "VALUES ('2024q1', ?, 1, 0)",
+            (table,),
+        )
+    connection.commit()
+    assert fully_loaded_quarters(connection) == set()
+    connection.close()
+
+
+def test_no_load_log_means_nothing_is_loaded(tmp_path: Path) -> None:
+    from ingest.dera_loader import fully_loaded_quarters
+
+    connection = open_database(tmp_path / "x.db")
+    create_schema(connection)
+    assert fully_loaded_quarters(connection) == set()
+    connection.close()

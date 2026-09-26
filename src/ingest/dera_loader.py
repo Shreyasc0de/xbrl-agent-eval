@@ -38,6 +38,7 @@ __all__ = [
     "create_indexes",
     "create_schema",
     "load_quarter",
+    "fully_loaded_quarters",
     "open_database",
 ]
 
@@ -354,6 +355,22 @@ def _insert_batch(
     return inserted, len(batch) - inserted
 
 
+def fully_loaded_quarters(connection: sqlite3.Connection) -> set[str]:
+    """Quarters whose every table finished loading.
+
+    A quarter writes one load_log row per table as that table completes, so a
+    run killed partway leaves some of them. Treating a partial quarter as done
+    would leave the database quietly missing facts, and the question generator
+    would then drop questions for a reason that does not exist. Only a quarter
+    with a row for every table counts.
+    """
+    expected = set(REQUIRED_COLUMNS)
+    seen: dict[str, set[str]] = {}
+    for quarter, table in connection.execute("SELECT quarter, tbl FROM load_log"):
+        seen.setdefault(str(quarter), set()).add(str(table))
+    return {quarter for quarter, tables in seen.items() if expected <= tables}
+
+
 def load_quarter(
     connection: sqlite3.Connection,
     zip_path: Path,
@@ -453,12 +470,17 @@ def _cli() -> None:
         show_default="~/xbrl-data/xbrl.db, or $XBRL_DB",
     )
     @click.option(
+        "--force",
+        is_flag=True,
+        help="Reload quarters that are already fully loaded instead of skipping them.",
+    )
+    @click.option(
         "--raw-dir",
         type=click.Path(file_okay=False, path_type=Path),
         default=lambda: default_db_path().parent / "raw",
         show_default="alongside the database",
     )
-    def command(quarters: str, db_path: Path, raw_dir: Path) -> None:
+    def command(quarters: str, db_path: Path, raw_dir: Path, force: bool) -> None:
         names = [quarter.strip().lower() for quarter in quarters.split(",") if quarter.strip()]
         if not names:
             raise click.UsageError("--quarters listed no quarters")
@@ -471,8 +493,18 @@ def _cli() -> None:
         connection = open_database(db_path)
         create_schema(connection)
 
-        total = 0
+        already = set() if force else fully_loaded_quarters(connection)
+        pending = [quarter for quarter in names if quarter not in already]
         for quarter in names:
+            if quarter in already:
+                click.echo(f"{quarter}: already loaded, skipping")
+        if not pending:
+            click.echo("nothing to load; pass --force to reload anyway")
+            connection.close()
+            return
+
+        total = 0
+        for quarter in pending:
             url = DERA_QUARTER_URL.format(quarter=quarter)
             destination = raw_dir / f"{quarter}.zip"
             # Say what is actually happening. Printing "downloading" on a cache
