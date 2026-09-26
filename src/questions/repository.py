@@ -4,9 +4,24 @@ This module and everything above it in ``src/questions/`` read ``data/xbrl.db``.
 Nothing under ``src/agents/`` may import from here. That is the benchmark's one
 invariant, and the import direction is how it is enforced.
 
-Every method is a query. No method caches across calls, because the database is
-written once by the loader and read afterwards, so staleness is not a risk and
-a cache would only hide which queries are actually expensive.
+Most methods are a straight query. Two are memoized for the life of the
+repository, and that was a reversal: this module used to cache nothing, on the
+grounds that a cache would hide which queries are expensive.
+
+What that reasoning missed is that the expensive thing here is not a query, it
+is a query repeated. Establishing that peers commonly tag a concept walks every
+company in the SIC major group, and it does that again for every candidate
+concept, for every company, for every fiscal year. The peer set does not change
+between those passes. At two loaded quarters the waste was tolerable. At eight
+it turned question generation into a job with no visible end, which is how it
+was found.
+
+So ``submissions_for_cik`` and ``tags_present`` are memoized, and
+``cache_stats`` reports hits and misses so the cost stays visible rather than
+merely hidden faster. The database is written once by the loader and read
+afterwards, so a repository built after the load cannot go stale. A repository
+held across a write would, which is why the cache lives on the instance and not
+on the module.
 """
 
 from __future__ import annotations
@@ -75,12 +90,32 @@ class NumFact:
 class FactRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self._connection = connection
+        self._submissions: dict[tuple[int, tuple[str, ...]], list[Submission]] = {}
+        self._tags: dict[str, frozenset[str]] = {}
+        self._hits = 0
+        self._misses = 0
+
+    def cache_stats(self) -> dict[str, int]:
+        """Hits, misses and entries held. The point is that the cost stays visible."""
+        return {
+            "hits": self._hits,
+            "misses": self._misses,
+            "submissions_cached": len(self._submissions),
+            "tag_sets_cached": len(self._tags),
+        }
 
     # ---------------------------------------------------------------- submissions
 
     def submissions_for_cik(
         self, cik: int, forms: tuple[str, ...] = ("10-K", "10-Q")
     ) -> list[Submission]:
+        key = (cik, forms)
+        cached = self._submissions.get(key)
+        if cached is not None:
+            self._hits += 1
+            return cached
+        self._misses += 1
+
         placeholders = ", ".join("?" for _ in forms)
         rows = self._connection.execute(
             f"""
@@ -91,7 +126,9 @@ class FactRepository:
             """,
             (cik, *forms),
         ).fetchall()
-        return [Submission(*row) for row in rows]
+        submissions = [Submission(*row) for row in rows]
+        self._submissions[key] = submissions
+        return submissions
 
     def submission(self, adsh: str) -> Submission | None:
         row = self._connection.execute(
@@ -110,12 +147,16 @@ class FactRepository:
         roster, because a wider peer set makes "this concept is commonly tagged
         in this industry" a stronger claim.
         """
+        # A range rather than ``sic / 100 = ?``. An expression on a column
+        # cannot use an index, so the old form scanned every submission on
+        # every call.
+        low = sic_major_group * 100
         rows = self._connection.execute(
             """
             SELECT DISTINCT cik FROM sub
-            WHERE sic IS NOT NULL AND sic / 100 = ? AND cik != ?
+            WHERE sic >= ? AND sic < ? AND cik != ?
             """,
-            (sic_major_group, exclude_cik),
+            (low, low + 100, exclude_cik),
         ).fetchall()
         return [row[0] for row in rows]
 
@@ -138,11 +179,24 @@ class FactRepository:
         return [NumFact(*row) for row in rows]
 
     def tags_present(self, adsh: str) -> set[str]:
+        """Every consolidated tag in one filing.
+
+        Memoized, and returned as a fresh set so a caller that mutates the
+        result cannot corrupt the cache for every caller after it.
+        """
+        cached = self._tags.get(adsh)
+        if cached is not None:
+            self._hits += 1
+            return set(cached)
+        self._misses += 1
+
         rows = self._connection.execute(
             f"SELECT DISTINCT tag FROM num WHERE adsh = ? AND {_CONSOLIDATED_ONLY}",
             (adsh,),
         ).fetchall()
-        return {row[0] for row in rows}
+        tags = frozenset(row[0] for row in rows)
+        self._tags[adsh] = tags
+        return set(tags)
 
     def period_ends(self, adsh: str, qtrs: int) -> list[int]:
         rows = self._connection.execute(

@@ -16,7 +16,7 @@ level goes through it.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Final
 
@@ -699,8 +699,16 @@ def generate_all(
     repository: FactRepository,
     companies: Sequence[Company],
     config: GeneratorConfig | None = None,
+    progress: Callable[[str, int], None] | None = None,
 ) -> QuestionSet:
-    """Run every generator over the roster and collect the result."""
+    """Run every generator over the roster and collect the result.
+
+    ``progress`` is called with a label and the questions gathered so far. The
+    loader grew a progress callback because a multi-million row load was silent
+    for minutes and a stalled run was indistinguishable from a slow one.
+    Generation had exactly the same problem and none of the reporting, which is
+    why a run that had gone quadratic looked identical to one nearly finished.
+    """
     settings = config if config is not None else GeneratorConfig()
     question_set = QuestionSet()
     drop_log = question_set.drop_log
@@ -709,12 +717,18 @@ def generate_all(
         company.cik: repository.submissions_for_cik(company.cik) for company in companies
     }
 
-    for company in companies:
+    def report(label: str) -> None:
+        if progress is not None:
+            progress(label, len(question_set.questions))
+
+    for index, company in enumerate(companies, start=1):
         submissions = submissions_by_cik[company.cik]
         question_set.extend(generate_level_1(repository, company, submissions, drop_log))
         question_set.extend(generate_level_2(repository, company, submissions, drop_log))
         question_set.extend(generate_level_3(repository, company, submissions, drop_log))
         question_set.extend(generate_level_5(repository, company, submissions, drop_log, settings))
+        report(f"{company.ticker} ({index}/{len(companies)})")
 
     question_set.extend(generate_level_4(repository, companies, submissions_by_cik, drop_log))
+    report("cross-company (L4)")
     return question_set

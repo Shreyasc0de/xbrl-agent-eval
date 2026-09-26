@@ -262,6 +262,8 @@ def create_indexes(connection: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_num_fact ON num (adsh, tag, ddate, qtrs)",
         "CREATE INDEX IF NOT EXISTS idx_num_tag ON num (tag, ddate, qtrs)",
         "CREATE INDEX IF NOT EXISTS idx_sub_cik ON sub (cik, fy, fp)",
+        # Peer grouping filters on a SIC range, which needs sic leading.
+        "CREATE INDEX IF NOT EXISTS idx_sub_sic ON sub (sic, cik)",
         "CREATE INDEX IF NOT EXISTS idx_sub_form ON sub (form, fy, fp)",
         "CREATE INDEX IF NOT EXISTS idx_pre_fact ON pre (adsh, tag, version)",
         "CREATE INDEX IF NOT EXISTS idx_tag_custom ON tag (custom)",

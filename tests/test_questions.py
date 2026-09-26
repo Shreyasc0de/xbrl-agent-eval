@@ -28,7 +28,14 @@ from questions.generators import (
 )
 from questions.models import DropLog, DropReason, FactRef, Question, QuestionSet
 from questions.repository import FactRepository
-from tests.conftest import ACME, BETA, DELTA, FIXTURE_COMPANIES, GAMMA
+from tests.conftest import (
+    ACME,
+    BETA,
+    DELTA,
+    FIXTURE_COMPANIES,
+    GAMMA,
+    SIC_SEMICONDUCTORS,
+)
 
 ACME_COMPANY, BETA_COMPANY, GAMMA_COMPANY, DELTA_COMPANY = FIXTURE_COMPANIES
 
@@ -561,3 +568,67 @@ def test_verify_roster_catches_a_cik_pointing_at_the_wrong_company(
     )
     with pytest.raises(RosterMismatchError, match="does not contain"):
         verify_roster(repository, transposed)
+
+
+# --------------------------------------------------------------------------
+# Repository caching
+# --------------------------------------------------------------------------
+# Added after question generation went from seconds to over half an hour when
+# the database grew from two quarters to eight. The cost was one query repeated,
+# not one query that was slow.
+
+
+def test_repeated_tag_lookups_hit_the_cache(repository: FactRepository) -> None:
+    adsh = repository.submissions_for_cik(ACME)[0].adsh
+    repository.tags_present(adsh)
+    before = repository.cache_stats()["hits"]
+    repository.tags_present(adsh)
+    repository.tags_present(adsh)
+    assert repository.cache_stats()["hits"] == before + 2
+
+
+def test_a_cached_tag_set_cannot_be_corrupted_by_its_caller(
+    repository: FactRepository,
+) -> None:
+    """The cache hands out a copy.
+
+    A caller that mutated the returned set would otherwise change what every
+    later caller sees, and the peer logic does set arithmetic on this result.
+    """
+    adsh = repository.submissions_for_cik(ACME)[0].adsh
+    first = repository.tags_present(adsh)
+    original = set(first)
+    first.clear()
+    assert repository.tags_present(adsh) == original
+
+
+def test_repeated_submission_lookups_hit_the_cache(repository: FactRepository) -> None:
+    repository.submissions_for_cik(ACME)
+    before = repository.cache_stats()["hits"]
+    repository.submissions_for_cik(ACME)
+    assert repository.cache_stats()["hits"] == before + 1
+
+
+def test_different_form_filters_are_cached_separately(repository: FactRepository) -> None:
+    """The form tuple is part of the key, or a 10-K query serves 10-Q results."""
+    annual = repository.submissions_for_cik(ACME, forms=("10-K",))
+    both = repository.submissions_for_cik(ACME, forms=("10-K", "10-Q"))
+    assert all(submission.form == "10-K" for submission in annual)
+    assert len(both) >= len(annual)
+
+
+def test_peer_lookup_finds_companies_in_the_same_major_group(
+    repository: FactRepository,
+) -> None:
+    """Guards the rewrite from sic / 100 = ? to a sargable range."""
+    peers = repository.peer_ciks(SIC_SEMICONDUCTORS // 100, exclude_cik=ACME)
+    assert ACME not in peers
+    assert {BETA, GAMMA, DELTA} <= set(peers)
+
+
+def test_generate_all_reports_progress(repository: FactRepository) -> None:
+    """A silent generator is indistinguishable from a hung one."""
+    seen: list[tuple[str, int]] = []
+    generate_all(repository, FIXTURE_COMPANIES, progress=lambda a, b: seen.append((a, b)))
+    assert len(seen) == len(FIXTURE_COMPANIES) + 1
+    assert seen[-1][0] == "cross-company (L4)"

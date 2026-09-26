@@ -69,7 +69,12 @@ def main(db_path: Path, out_dir: Path, min_peers: int, peer_share: float) -> Non
     click.echo(f"roster verified: {len(resolved)} companies")
 
     config = GeneratorConfig(min_peers_tagging=min_peers, peer_tagging_share=peer_share)
-    question_set = generate_all(repository, ROSTER, config)
+
+    def show(label: str, gathered: int) -> None:
+        click.echo(f"  {label}: {gathered} questions so far")
+
+    question_set = generate_all(repository, ROSTER, config, progress=show)
+    click.echo(f"cache: {repository.cache_stats()}")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     questions_written = question_set.write_jsonl(out_dir / "questions.jsonl")
