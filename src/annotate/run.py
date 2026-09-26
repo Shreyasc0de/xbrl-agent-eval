@@ -12,12 +12,11 @@ from pathlib import Path
 
 import click
 
-from agents.tools import FilingStore, ToolError
+from agents.tools import Chunk, FilingStore, ToolError
 from annotate.passages import (
     AnnotationSet,
     PassageAnnotation,
     SkippedQuestion,
-    SkipReason,
     annotate_question,
     iter_answerable,
 )
@@ -55,27 +54,22 @@ def main(questions_dir: Path, filings_dir: Path) -> None:
 
     annotations: list[PassageAnnotation] = []
     skipped: list[SkippedQuestion] = []
-    chunk_cache: dict[str, list[object]] = {}
+    chunk_cache: dict[str, list[Chunk]] = {}
 
-    for question_id, adsh, value in rows:
+    def chunks_for(adsh: str) -> list[Chunk]:
         if adsh not in chunk_cache:
             try:
                 chunk_cache[adsh] = list(store.chunks(adsh))
             except ToolError as error:
                 chunk_cache[adsh] = []
                 click.echo(f"  {adsh}: {error}", err=True)
-        chunks = chunk_cache[adsh]
-        if not chunks:
-            skipped.append(
-                SkippedQuestion(
-                    question_id=question_id,
-                    adsh=adsh,
-                    reason=SkipReason.FILING_UNAVAILABLE,
-                    detail="filing text is not cached",
-                )
-            )
-            continue
-        result = annotate_question(question_id, adsh, value, chunks)  # type: ignore[arg-type]
+        return chunk_cache[adsh]
+
+    for question_id, adsh, facts in rows:
+        # A year-over-year question's inputs live in two different filings, so
+        # the chunks are gathered per fact rather than per question.
+        available = {fact_adsh: chunks_for(fact_adsh) for fact_adsh, _ in facts}
+        result = annotate_question(question_id, adsh, facts, available)
         if isinstance(result, PassageAnnotation):
             annotations.append(result)
         else:
@@ -95,6 +89,11 @@ def main(questions_dir: Path, filings_dir: Path) -> None:
             if annotations
             else 0
         ),
+        "median_facts_per_question": (
+            sorted(len(a.fact_chunk_ids) for a in annotations)[len(annotations) // 2]
+            if annotations
+            else 0
+        ),
     }
     (questions_dir / "passages_summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8"
@@ -104,6 +103,7 @@ def main(questions_dir: Path, filings_dir: Path) -> None:
     click.echo(f"annotated: {written}  skipped: {skipped_written}")
     click.echo(f"skipped by reason: {summary['skipped_by_reason']}")
     click.echo(f"median chunks per annotated question: {summary['median_chunks_per_question']}")
+    click.echo(f"median input facts per question: {summary['median_facts_per_question']}")
 
     if written == 0 and rows:
         click.echo("no question could be annotated; this is a failure, not a result", err=True)

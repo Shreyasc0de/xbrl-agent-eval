@@ -33,6 +33,29 @@ above scores zero on it, which is the point. A question whose figure appears in
 both the note and the statement scores one either way, which is the limit, and
 it belongs in the README next to the number.
 
+What gets searched for
+----------------------
+
+The fact values an answer was computed from, not the answer itself. The first
+version searched for the answer value and skipped 473 of 995 questions with
+"no printable scale", which sounded like a data problem and was not. A level 2
+answer is a ratio and a level 3 answer is a year-over-year change. Neither is
+printed anywhere in a filing. What is printed is the revenue and the cost of
+sales they are derived from, and the question already records exactly those rows
+as its provenance.
+
+Annotating on the facts fixes level 1 too, where the single fact value is the
+answer, so one rule covers every level. It also follows each fact into its own
+filing: a year-over-year question draws one input from this year's 10-K and one
+from last year's, so the annotation captures whether the agent opened both.
+
+A question is annotated only when every one of its facts was located, and it
+counts as a hit only when the agent read a passage for every one of them. An
+agent that read revenue, never read cost of sales, and produced a plausible
+margin did not retrieve what it needed. Scoring that as a retrieval success
+would push the failure into the reasoning bucket, which is the exact
+misattribution this metric exists to prevent.
+
 Short mantissas
 ---------------
 
@@ -47,7 +70,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -60,7 +83,9 @@ __all__ = [
     "PassageAnnotation",
     "SkipReason",
     "SkippedQuestion",
+    "FactLocation",
     "annotate_question",
+    "locate_fact",
     "rendered_forms",
 ]
 
@@ -91,19 +116,36 @@ class SkipReason:
     NO_PRINTABLE_SCALE = "no_printable_scale"
     FILING_UNAVAILABLE = "filing_unavailable"
     NO_MATCHING_CHUNK = "no_matching_chunk"
+    NO_FACTS = "no_facts"
 
 
 @dataclass(frozen=True)
 class PassageAnnotation:
-    """The chunks of one filing that state one question's answer."""
+    """Where each of a question's input facts is printed.
+
+    ``fact_chunk_ids`` holds one group per fact, and a hit requires the agent to
+    have opened a chunk from every group. ``chunk_ids`` is their union, kept for
+    reading and for anything that only needs "was this passage relevant at all".
+    """
 
     question_id: str
     adsh: str
-    chunk_ids: tuple[str, ...]
+    fact_chunk_ids: tuple[tuple[str, ...], ...]
     scales: tuple[str, ...]
 
+    @property
+    def chunk_ids(self) -> tuple[str, ...]:
+        seen: dict[str, None] = {}
+        for group in self.fact_chunk_ids:
+            for chunk_id in group:
+                seen[chunk_id] = None
+        return tuple(sorted(seen))
+
     def to_json(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        payload["fact_chunk_ids"] = [list(group) for group in self.fact_chunk_ids]
+        payload["chunk_ids"] = list(self.chunk_ids)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -168,19 +210,21 @@ def _pattern(form: str) -> re.Pattern[str]:
     return re.compile(rf"(?<![\d.,]){body}(?![\d.,])")
 
 
-def annotate_question(
-    question_id: str,
-    adsh: str,
+@dataclass(frozen=True)
+class FactLocation:
+    """One input fact and where it is printed."""
+
+    adsh: str
+    value: float
+    chunk_ids: tuple[str, ...]
+    scale: str
+
+
+def locate_fact(
     value: float,
     chunks: Sequence[Chunk],
-) -> PassageAnnotation | SkippedQuestion:
-    """Find every chunk that prints ``value`` at some standard scale.
-
-    Returns a ``SkippedQuestion`` rather than an empty annotation when there is
-    nothing worth searching for or nothing was found. An empty annotation would
-    be indistinguishable from "the agent had no chance", and would drag the
-    metric down for a reason that has nothing to do with the agent.
-    """
+) -> tuple[tuple[str, ...], str] | str:
+    """Chunks printing ``value`` at some standard scale, or a skip reason."""
     searchable: dict[str, tuple[str, ...]] = {}
     for scale_name in SCALES:
         forms = rendered_forms(value, scale_name)
@@ -188,46 +232,77 @@ def annotate_question(
             searchable[scale_name] = forms
 
     if not searchable:
-        # Distinguish "too short to search for" from "does not divide into any
-        # scale", because they call for different fixes.
-        any_scale_divides = any(
-            abs(abs(value / divisor) - round(abs(value / divisor)))
+        divides = any(
+            abs(value / divisor) >= 1
+            and abs(abs(value / divisor) - round(abs(value / divisor)))
             <= _INTEGRAL_TOLERANCE * max(1.0, abs(value / divisor))
-            and abs(value / divisor) >= 1
             for divisor in SCALES.values()
         )
-        reason = (
-            SkipReason.MANTISSA_TOO_SHORT if any_scale_divides else SkipReason.NO_PRINTABLE_SCALE
-        )
-        return SkippedQuestion(
-            question_id=question_id,
-            adsh=adsh,
-            reason=reason,
-            detail=f"value {value!r} has no searchable rendering",
-        )
+        return SkipReason.MANTISSA_TOO_SHORT if divides else SkipReason.NO_PRINTABLE_SCALE
 
     hits: dict[str, None] = {}
-    matched_scales: dict[str, None] = {}
+    matched = ""
     for scale_name, forms in searchable.items():
         patterns = [_pattern(form) for form in forms]
         for chunk in chunks:
             if any(pattern.search(chunk.text) for pattern in patterns):
                 hits[chunk.chunk_id] = None
-                matched_scales[scale_name] = None
+                matched = matched or scale_name
 
     if not hits:
+        return SkipReason.NO_MATCHING_CHUNK
+    return tuple(sorted(hits)), matched
+
+
+def annotate_question(
+    question_id: str,
+    adsh: str,
+    facts: Sequence[tuple[str, float]],
+    chunks_by_adsh: Mapping[str, Sequence[Chunk]],
+) -> PassageAnnotation | SkippedQuestion:
+    """Locate every fact the answer was computed from.
+
+    All or nothing. A question with one input located and another not cannot be
+    scored fairly: counting it would let an agent pass by reading half of what
+    the answer needs, and failing it would penalize the agent for a passage
+    nobody could find. It is skipped, and the denominator says so.
+    """
+    if not facts:
         return SkippedQuestion(
             question_id=question_id,
             adsh=adsh,
-            reason=SkipReason.NO_MATCHING_CHUNK,
-            detail=f"value {value!r} does not appear in {len(chunks)} chunks at any scale",
+            reason=SkipReason.NO_FACTS,
+            detail="question cites no facts, so there is nothing to locate",
         )
+
+    groups: list[tuple[str, ...]] = []
+    scales: dict[str, None] = {}
+    for fact_adsh, value in facts:
+        chunks = chunks_by_adsh.get(fact_adsh)
+        if not chunks:
+            return SkippedQuestion(
+                question_id=question_id,
+                adsh=adsh,
+                reason=SkipReason.FILING_UNAVAILABLE,
+                detail=f"no cached text for {fact_adsh}, which states one of the inputs",
+            )
+        located = locate_fact(value, chunks)
+        if isinstance(located, str):
+            return SkippedQuestion(
+                question_id=question_id,
+                adsh=adsh,
+                reason=located,
+                detail=f"input {value!r} in {fact_adsh}",
+            )
+        chunk_ids, scale = located
+        groups.append(chunk_ids)
+        scales[scale] = None
 
     return PassageAnnotation(
         question_id=question_id,
         adsh=adsh,
-        chunk_ids=tuple(sorted(hits)),
-        scales=tuple(sorted(matched_scales)),
+        fact_chunk_ids=tuple(groups),
+        scales=tuple(sorted(scales)),
     )
 
 
@@ -238,8 +313,8 @@ class AnnotationSet:
     annotations: list[PassageAnnotation]
     skipped: list[SkippedQuestion]
 
-    def by_question(self) -> dict[str, tuple[str, ...]]:
-        return {entry.question_id: entry.chunk_ids for entry in self.annotations}
+    def by_question(self) -> dict[str, tuple[tuple[str, ...], ...]]:
+        return {entry.question_id: entry.fact_chunk_ids for entry in self.annotations}
 
     def counts_by_reason(self) -> dict[str, int]:
         counts: dict[str, int] = {}
@@ -264,40 +339,47 @@ class AnnotationSet:
         return len(self.skipped)
 
 
-def read_annotations(path: Path) -> dict[str, tuple[str, ...]]:
-    """Load ``question_id -> chunk ids``.
+def read_annotations(path: Path) -> dict[str, tuple[tuple[str, ...], ...]]:
+    """Load ``question_id -> one group of chunk ids per input fact``.
 
     A missing file is not an error here: a run made before annotations existed
     simply has no passage metric, which is different from having one of zero.
     """
     if not path.exists():
         return {}
-    mapping: dict[str, tuple[str, ...]] = {}
+    mapping: dict[str, tuple[tuple[str, ...], ...]] = {}
     with path.open(encoding="utf-8") as handle:
         for line in handle:
             if not line.strip():
                 continue
             row = json.loads(line)
-            mapping[str(row["question_id"])] = tuple(str(c) for c in row["chunk_ids"])
+            mapping[str(row["question_id"])] = tuple(
+                tuple(str(c) for c in group) for group in row["fact_chunk_ids"]
+            )
     return mapping
 
 
-def iter_answerable(questions: Iterable[dict[str, Any]]) -> list[tuple[str, str, float]]:
-    """``(question_id, adsh, value)`` for every question with a numeric answer.
+def iter_answerable(
+    questions: Iterable[dict[str, Any]],
+) -> list[tuple[str, str, list[tuple[str, float]]]]:
+    """``(question_id, primary_adsh, [(fact adsh, value), ...])`` per question.
+
+    The facts, not the answer. Each carries its own accession number, because a
+    year-over-year question takes one input from this year's filing and one from
+    last year's.
 
     Level 5 questions are excluded because the absence of a figure is their
     answer: there is no passage to find, and a passage that did state one would
     mean the question set is wrong.
     """
-    rows: list[tuple[str, str, float]] = []
+    rows: list[tuple[str, str, list[tuple[str, float]]]] = []
     for question in questions:
         if question.get("answer_value") is None:
             continue
-        rows.append(
-            (
-                str(question["question_id"]),
-                str(question["primary_adsh"]),
-                float(question["answer_value"]),
-            )
-        )
+        facts = [
+            (str(fact["adsh"]), float(fact["value"]))
+            for fact in question.get("facts", ())
+            if fact.get("value") is not None
+        ]
+        rows.append((str(question["question_id"]), str(question["primary_adsh"]), facts))
     return rows

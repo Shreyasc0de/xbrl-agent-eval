@@ -51,9 +51,10 @@ class QuestionRecord:
     read, so a field the file does not carry is a field the runner cannot use.
 
     ``answer_chunks`` comes from the companion ``passages.jsonl``, which is
-    published the same way. It is ``None``, not empty, when that file does not
-    cover this question: no annotation and no passage found are different facts,
-    and collapsing them would score an agent on a question nobody could pass.
+    published the same way. It holds one group of chunk ids per input fact. It
+    is ``None``, not empty, when that file does not cover this question: no
+    annotation and no passage found are different facts, and collapsing them
+    would score an agent on a question nobody could pass.
     """
 
     question_id: str
@@ -64,7 +65,7 @@ class QuestionRecord:
     primary_adsh: str
     supporting_adsh: tuple[str, ...]
     concept: str
-    answer_chunks: tuple[str, ...] | None = None
+    answer_chunks: tuple[tuple[str, ...], ...] | None = None
 
     @property
     def ground_truth(self) -> GroundTruth:
@@ -177,13 +178,20 @@ def _to_agent_answer(result: AgentResult) -> AgentAnswer:
 def _grade_one(question: QuestionRecord, result: AgentResult) -> TaskRecord:
     opened_correct = bool(set(result.filings_opened) & question.answer_bearing_filings)
 
-    # Tri-state on purpose. False means the agent read no passage stating the
-    # figure. None means nobody knows which passage states it, so this task
-    # contributes nothing to the passage metric rather than a zero.
+    # Every input, not any. A gross margin needs revenue and cost of sales;
+    # an agent that read one, never read the other, and produced a plausible
+    # figure did not retrieve what the answer required. Counting that as a
+    # retrieval hit would push the failure into the reasoning bucket, which is
+    # the misattribution this metric exists to prevent.
+    #
+    # Tri-state on purpose. False means an input went unread. None means nobody
+    # located the passages, so this task contributes nothing to the metric
+    # rather than a zero.
+    opened = set(result.chunks_opened)
     opened_passage: bool | None = (
         None
         if question.answer_chunks is None
-        else bool(set(result.chunks_opened) & set(question.answer_chunks))
+        else all(bool(opened & set(group)) for group in question.answer_chunks)
     )
     steps = [
         {
