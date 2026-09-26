@@ -41,6 +41,15 @@ DB ?= $(if $(XBRL_DB),$(XBRL_DB),$(HOME)/xbrl-data/xbrl.db)
 # down, and it stayed invisible because doctor only ever prints.
 DATA_DIR := $(dir $(DB))
 
+# Every pipeline target runs the venv's interpreter by path, never a bare
+# `python`. A bare `python` is whatever the shell happens to resolve, and on a
+# machine with conda that is conda's, which has none of this project's
+# packages installed. It fails with ModuleNotFoundError: No module named
+# 'ingest', which reads like a broken checkout rather than a forgotten
+# activate. Naming the interpreter removes the question.
+VENV_PY := .venv/bin/python
+REQUIRE_VENV = @test -x $(VENV_PY) || { echo "No .venv here. Run make install first."; exit 1; }
+
 # Says what is set up and what is not, without needing the package to import.
 doctor:
 	@echo "python on PATH:   $$(command -v python3 || echo none) $$(python3 --version 2>&1)"
@@ -98,19 +107,24 @@ quarters:
 ifndef QUARTERS
 	$(error QUARTERS is not set, for example: make data QUARTERS=2024q1,2024q2)
 endif
-	python -m ingest.dera_loader --quarters $(QUARTERS) --db $(DB)
+	$(REQUIRE_VENV)
+	$(VENV_PY) -m ingest.dera_loader --quarters $(QUARTERS) --db $(DB)
 
 filings:
-	python -m ingest.filings --db $(DB)
+	$(REQUIRE_VENV)
+	$(VENV_PY) -m ingest.filings --db $(DB)
 
 questions:
-	python -m questions.generate --db $(DB)
+	$(REQUIRE_VENV)
+	$(VENV_PY) -m questions.generate --db $(DB)
 
 passages:
-	python -m annotate.run
+	$(REQUIRE_VENV)
+	$(VENV_PY) -m annotate.run
 
 results:
-	python -m report.verify_results --write
+	$(REQUIRE_VENV)
+	$(VENV_PY) -m report.verify_results --write
 
 clean:
 	rm -rf .mypy_cache .ruff_cache .pytest_cache htmlcov .coverage

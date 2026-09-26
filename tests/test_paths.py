@@ -132,3 +132,28 @@ def test_the_makefile_never_looks_for_data_inside_the_checkout() -> None:
         "the Makefile points at data/ inside the checkout; it must derive "
         f"these from DB, as core.paths does: {offending}"
     )
+
+
+def test_no_pipeline_target_runs_a_bare_python() -> None:
+    """A bare ``python`` in a recipe is whatever the shell resolves.
+
+    On a machine with conda on PATH that is conda's interpreter, which has none
+    of this project's packages, so the run dies with ModuleNotFoundError: No
+    module named 'ingest'. That reads like a broken checkout rather than a
+    forgotten activate, and it cost a load that had been running for half an
+    hour. Every pipeline target names the venv's interpreter by path.
+    """
+    import re
+    from pathlib import Path
+
+    makefile = (Path(__file__).resolve().parents[1] / "Makefile").read_text(encoding="utf-8")
+    # Only module invocations at a command position. Echoed help text and the
+    # python3 probes in doctor are not runs of the project's code.
+    pattern = re.compile(r"(?:^\t|[;&|]\s*)python\s+-m\b")
+    offending = [line for line in makefile.splitlines() if pattern.search(line)]
+
+    # A guard that cannot fail is not a guard.
+    assert pattern.search("\tpython -m ingest.dera_loader --db $(DB)")
+    assert not pattern.search("\t$(VENV_PY) -m ingest.dera_loader --db $(DB)")
+
+    assert not offending, f"recipes run a bare python instead of $(VENV_PY): {offending}"
