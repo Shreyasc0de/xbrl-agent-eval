@@ -22,7 +22,7 @@ from agents.system_b import SystemB
 from agents.tools import FilingStore
 from core.cache import LLMCache
 from core.llm import CachingBackend, OllamaBackend
-from core.paths import default_filings_dir, default_questions_dir
+from core.paths import default_cache_path, default_filings_dir, default_questions_dir
 from eval.runner import load_questions, run_question_set
 
 __all__ = ["main"]
@@ -53,6 +53,14 @@ __all__ = ["main"]
     default=Path("runs"),
     show_default=True,
 )
+@click.option(
+    "--cache",
+    "cache_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=default_cache_path,
+    show_default="alongside the database",
+    help="Content-addressed model call cache. Deliberately outside the checkout.",
+)
 @click.option("--limit", type=int, default=None, help="Run only the first N questions.")
 @click.option("--max-steps", default=10, show_default=True)
 @click.option("--temperature", default=0.0, show_default=True)
@@ -72,6 +80,7 @@ def main(
     questions_path: Path,
     filings_dir: Path,
     runs_dir: Path,
+    cache_path: Path,
     limit: int | None,
     max_steps: int,
     temperature: float,
@@ -94,7 +103,7 @@ def main(
     store = FilingStore(filings_dir)
     caching = CachingBackend(
         OllamaBackend(model, ollama_url, json_mode=json_mode),
-        LLMCache(runs_dir / "model-calls.db"),
+        LLMCache(cache_path),
     )
     agent: SystemA | SystemB
     if system == "A":

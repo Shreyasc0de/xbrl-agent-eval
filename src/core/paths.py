@@ -14,7 +14,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-__all__ = ["DEFAULT_DB_ENV", "default_db_path", "default_filings_dir", "default_questions_dir"]
+__all__ = [
+    "DEFAULT_DB_ENV",
+    "default_cache_path",
+    "default_db_path",
+    "default_filings_dir",
+    "default_questions_dir",
+]
 
 DEFAULT_DB_ENV = "XBRL_DB"
 
@@ -44,3 +50,20 @@ def default_filings_dir() -> Path:
 
 def default_questions_dir() -> Path:
     return default_db_path().parent / "questions"
+
+
+def default_cache_path() -> Path:
+    """The content-addressed model call cache.
+
+    Beside the database, not under ``runs/`` in the checkout, and the reason is
+    the same one that moved the database: a checkout on the Desktop sits inside
+    a synced folder, and a SQLite file being written there can have the file
+    swapped underneath it. The database failed that way with a bus error. The
+    cache failed that way with "unable to open database file", 20 tasks into a
+    50 task run.
+
+    It does not belong under ``runs/`` regardless. Everything else there is a
+    published artifact, committed as evidence for a claim. This is a cache: it
+    is rebuildable, it is not evidence, and it is not committed.
+    """
+    return default_db_path().parent / "model-calls.db"

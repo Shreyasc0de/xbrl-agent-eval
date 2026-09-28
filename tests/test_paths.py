@@ -157,3 +157,31 @@ def test_no_pipeline_target_runs_a_bare_python() -> None:
     assert not pattern.search("\t$(VENV_PY) -m ingest.dera_loader --db $(DB)")
 
     assert not offending, f"recipes run a bare python instead of $(VENV_PY): {offending}"
+
+
+def test_the_model_call_cache_lives_outside_the_checkout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """It used to sit in runs/, inside a Desktop checkout that iCloud syncs.
+
+    A SQLite file written there can have the file swapped underneath it. The
+    ground truth database failed that way with a bus error; the cache failed
+    that way with "unable to open database file", twenty tasks into a fifty
+    task run. It also does not belong under runs/ on principle: everything else
+    there is committed evidence for a published claim, and a cache is neither.
+    """
+    from core.paths import default_cache_path
+
+    monkeypatch.setenv(DEFAULT_DB_ENV, str(tmp_path / "db" / "xbrl.db"))
+    assert default_cache_path() == tmp_path / "db" / "model-calls.db"
+
+
+def test_the_runner_does_not_hard_code_the_cache_into_runs() -> None:
+    import inspect
+
+    from eval import run as eval_run
+
+    source = inspect.getsource(eval_run)
+    assert (
+        'runs_dir / "model-calls.db"' not in source
+    ), "the model call cache must not be written into the run artifacts directory"
