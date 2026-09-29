@@ -93,6 +93,11 @@ class RunManifest:
     prompt_template_hash: str
     question_set_hash: str
     question_count: int
+    # Present when the run covered a sample rather than the whole set. Without
+    # the seed a sampled run cannot be reproduced, and a run that cannot be
+    # reproduced is not evidence.
+    sample_size: int | None = None
+    sample_seed: int | None = None
     git_commit: str = field(default_factory=git_commit)
     started_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     finished_at: str = ""

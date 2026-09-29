@@ -11,6 +11,7 @@ README later claims.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,7 +24,7 @@ from agents.tools import FilingStore
 from core.cache import LLMCache
 from core.llm import CachingBackend, OllamaBackend
 from core.paths import default_cache_path, default_filings_dir, default_questions_dir
-from eval.runner import load_questions, run_question_set
+from eval.runner import load_questions, run_question_set, stratified_sample
 
 __all__ = ["main"]
 
@@ -61,7 +62,26 @@ __all__ = ["main"]
     show_default="alongside the database",
     help="Content-addressed model call cache. Deliberately outside the checkout.",
 )
-@click.option("--limit", type=int, default=None, help="Run only the first N questions.")
+@click.option(
+    "--limit",
+    type=int,
+    default=None,
+    help="Run only the first N question ids. Not a sample: use --sample instead.",
+)
+@click.option(
+    "--sample",
+    type=int,
+    default=None,
+    help="Random sample of N questions, proportional across levels. Prefer this "
+    "over --limit, which takes the first N ids and can miss a level entirely.",
+)
+@click.option(
+    "--sample-seed",
+    default=11,
+    show_default=True,
+    help="Seed for --sample. Hand the same seed to both systems so they answer "
+    "the same questions, which is what makes the comparison valid.",
+)
 @click.option("--max-steps", default=10, show_default=True)
 @click.option("--temperature", default=0.0, show_default=True)
 @click.option("--seed", default=7, show_default=True)
@@ -82,13 +102,25 @@ def main(
     runs_dir: Path,
     cache_path: Path,
     limit: int | None,
+    sample: int | None,
+    sample_seed: int,
     max_steps: int,
     temperature: float,
     seed: int,
     ollama_url: str,
     json_mode: bool,
 ) -> None:
+    if sample is not None and limit is not None:
+        raise click.UsageError("pass --sample or --limit, not both; they mean different things")
+
     questions = load_questions(questions_path, limit=limit)
+    if sample is not None:
+        questions = stratified_sample(questions, sample, seed=sample_seed)
+        by_level = Counter(question.level for question in questions)
+        click.echo(
+            f"stratified sample: {len(questions)} of {sample} requested, "
+            f"seed {sample_seed}, by level {dict(sorted(by_level.items()))}"
+        )
     if not questions:
         raise click.ClickException(f"{questions_path} contains no questions")
 
@@ -132,6 +164,8 @@ def main(
         run_dir,
         run_id=run_id,
         question_set_hash=question_set_hash,
+        sample_size=sample,
+        sample_seed=sample_seed if sample is not None else None,
         backend_name=backend,
         prompt_templates=all_templates(),
         progress=progress,

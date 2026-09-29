@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Final
 
-from eval.normalizers import Scale, normalize_uom, to_base_units
+from eval.normalizers import Scale, normalize_uom, normalize_uom_with_factor, to_base_units
 
 __all__ = [
     "EXACT_ABSOLUTE_TOLERANCE",
@@ -202,12 +202,17 @@ def grade(answer: AgentAnswer, truth: GroundTruth) -> Grade:
     if answer.answer_type is AnswerType.NOT_DISCLOSED:
         return Grade(False, ErrorClass.FALSE_ABSTENTION, None, truth.value, None, None)
 
-    # Unit comparison goes through normalize_uom on both sides so that an
-    # unrecognized unit raises instead of silently failing to match.
-    predicted_unit = normalize_uom(answer.unit)
+    # Unit comparison goes through normalization on both sides so that an
+    # unrecognized unit raises instead of silently failing to match. Only the
+    # agent's side carries a conversion factor, for percentages: a ratio
+    # answered as "46.2 percent" against a truth of 0.462 is the right figure in
+    # an equivalent unit. Truth comes from the database, which stores ratios as
+    # pure decimals, so a factor on that side would mean something upstream was
+    # wrong rather than that a unit needed translating.
+    predicted_unit, unit_factor = normalize_uom_with_factor(answer.unit)
     truth_unit = normalize_uom(truth.uom)
 
-    predicted = answer.value_in_base_units
+    predicted = answer.value_in_base_units * unit_factor
 
     if predicted_unit != truth_unit:
         return Grade(False, ErrorClass.UNIT_MISMATCH, predicted, truth.value, None, None)

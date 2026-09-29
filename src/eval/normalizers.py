@@ -37,6 +37,7 @@ __all__ = [
     "Scale",
     "apply_presentation_sign",
     "normalize_uom",
+    "normalize_uom_with_factor",
     "parse_scale",
     "period_type_from_qtrs",
     "to_base_units",
@@ -78,6 +79,22 @@ _UOM_ALIASES: Final[dict[str, str]] = {
     "xbrli:pure": "pure",
 }
 
+# A ratio expressed as a percentage. XBRL stores these as ``pure`` decimals, so
+# an agent answering "46.2 percent" against a truth of 0.462 has given the right
+# figure in an equivalent unit. Refusing it, which is what the grader used to do,
+# discarded correct answers as ungradeable and inflated the failure count.
+#
+# The conversion is deliberately one-directional and applied only to the agent's
+# answer. Ground truth comes from the database, which never carries a percent
+# unit, so converting the truth side would mean something had gone wrong
+# upstream rather than that a unit needed translating.
+#
+# This cannot turn a wrong answer into a right one: dividing an incorrect figure
+# by 100 leaves it incorrect. It can only rescue a correct one.
+_PERCENT_ALIASES: Final[frozenset[str]] = frozenset(
+    {"percent", "percentage", "%", "pct", "percents", "per cent"}
+)
+
 _VALID_FP: Final[frozenset[str]] = frozenset({"FY", "Q1", "Q2", "Q3", "Q4"})
 
 
@@ -116,6 +133,20 @@ def normalize_uom(raw: str) -> str:
     if key not in _UOM_ALIASES:
         raise ValueError(f"unrecognized unit of measure: {raw!r}")
     return _UOM_ALIASES[key]
+
+
+def normalize_uom_with_factor(raw: str) -> tuple[str, float]:
+    """Canonical unit, plus the factor that converts a value into it.
+
+    Everything except a percentage returns a factor of 1.0, so this is
+    ``normalize_uom`` with one translation bolted on rather than a second unit
+    system. ``normalize_uom`` itself still rejects "percent", because the only
+    place a percent legitimately appears is an agent's answer, and a percent
+    arriving from anywhere else is a bug worth raising on.
+    """
+    if raw.strip().lower() in _PERCENT_ALIASES:
+        return "pure", 0.01
+    return normalize_uom(raw), 1.0
 
 
 def apply_presentation_sign(value: float, *, negating: bool) -> float:

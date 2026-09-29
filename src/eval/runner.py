@@ -16,6 +16,7 @@ own count.
 from __future__ import annotations
 
 import json
+import random
 import time
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -30,7 +31,13 @@ from eval.grader import AgentAnswer, AnswerType, ErrorClass, GroundTruth, grade
 from eval.metrics import TaskOutcome, summarize_run
 from eval.normalizers import Scale, parse_scale
 
-__all__ = ["QuestionRecord", "TaskRecord", "load_questions", "run_question_set"]
+__all__ = [
+    "QuestionRecord",
+    "TaskRecord",
+    "load_questions",
+    "run_question_set",
+    "stratified_sample",
+]
 
 
 class Agent(Protocol):
@@ -74,6 +81,53 @@ class QuestionRecord:
     @property
     def answer_bearing_filings(self) -> set[str]:
         return {self.primary_adsh, *self.supporting_adsh}
+
+
+def stratified_sample(
+    questions: Sequence[QuestionRecord], size: int, *, seed: int
+) -> list[QuestionRecord]:
+    """A random sample that keeps each level's share of the whole set.
+
+    ``--limit`` takes the first N question ids, which is not a sample: the ids
+    are content hashes, so the order is arbitrary but fixed, and the first 50
+    happened to contain no level 5 questions at all. The headline hallucination
+    metric had a denominator of zero and the run still looked fine.
+
+    Proportional rather than equal allocation, because the published set's level
+    mix is itself a stated property of the benchmark and a run should describe
+    that set rather than a reweighted one. Seeded, so the same sample can be
+    handed to both systems, which is what makes the comparison a comparison.
+    """
+    if size <= 0:
+        raise ValueError(f"sample size must be positive, got {size}")
+    if size >= len(questions):
+        return list(questions)
+
+    by_level: dict[int, list[QuestionRecord]] = {}
+    for question in questions:
+        by_level.setdefault(question.level, []).append(question)
+
+    rng = random.Random(seed)
+    chosen: list[QuestionRecord] = []
+    # Largest remainder, so a level that rounds to zero still gets a question
+    # if the sample has room. A level silently dropped from a sample is the
+    # failure this function exists to prevent.
+    quotas: list[tuple[float, int]] = []
+    for level, group in sorted(by_level.items()):
+        exact = size * len(group) / len(questions)
+        quotas.append((exact - int(exact), level))
+        take = max(1, int(exact))
+        pool = sorted(group, key=lambda q: q.question_id)
+        chosen.extend(rng.sample(pool, min(take, len(pool))))
+
+    for _, level in sorted(quotas, reverse=True):
+        if len(chosen) >= size:
+            break
+        remaining = [q for q in by_level[level] if q not in chosen]
+        if remaining:
+            chosen.append(rng.choice(sorted(remaining, key=lambda q: q.question_id)))
+
+    return sorted(chosen[:size], key=lambda q: q.question_id)
 
 
 def load_questions(path: Path, limit: int | None = None) -> list[QuestionRecord]:
@@ -325,6 +379,8 @@ def run_question_set(
     question_set_hash: str,
     backend_name: str,
     prompt_templates: Iterable[str],
+    sample_size: int | None = None,
+    sample_seed: int | None = None,
     progress: Any = None,
 ) -> dict[str, Any]:
     """Run every question, grade it, and write the artifacts.
@@ -345,6 +401,8 @@ def run_question_set(
         prompt_template_hash=prompt_template_hash(*prompt_templates),
         question_set_hash=question_set_hash,
         question_count=len(questions),
+        sample_size=sample_size,
+        sample_seed=sample_seed,
     )
 
     started = time.perf_counter()

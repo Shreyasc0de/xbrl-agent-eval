@@ -258,3 +258,79 @@ def test_an_unanswerable_question_carrying_a_value_is_a_generator_bug() -> None:
 def test_an_answerable_question_without_a_value_is_a_generator_bug() -> None:
     with pytest.raises(ValueError):
         GroundTruth(value=None, uom="USD", level=1)
+
+
+# --------------------------------------------------------------------------
+# Percentages
+# --------------------------------------------------------------------------
+# A real run dropped a task as "unrecognized unit of measure: 'percent'". The
+# agent had answered a ratio question in percent, which is the right figure in
+# an equivalent unit, and the grader discarded it as ungradeable.
+
+
+def test_a_ratio_answered_in_percent_is_graded_correct() -> None:
+    answer = AgentAnswer(
+        answer_value=46.23,
+        unit="percent",
+        scale=Scale.UNITS,
+        answer_type=AnswerType.NUMERIC,
+        source_quote="gross margin of 46.23%",
+        confidence=0.9,
+    )
+    truth = GroundTruth(value=0.4623, uom="pure", level=2)
+    assert grade(answer, truth).correct
+
+
+def test_percent_conversion_cannot_rescue_a_wrong_figure() -> None:
+    """One-directional by construction. Dividing a wrong number by 100 leaves it wrong."""
+    answer = AgentAnswer(
+        answer_value=71.0,
+        unit="percent",
+        scale=Scale.UNITS,
+        answer_type=AnswerType.NUMERIC,
+        source_quote="q",
+        confidence=0.9,
+    )
+    truth = GroundTruth(value=0.4623, uom="pure", level=2)
+    assert not grade(answer, truth).correct
+
+
+def test_the_same_ratio_answered_as_a_decimal_still_grades_correct() -> None:
+    """The translation must not break the form the schema actually asks for."""
+    answer = AgentAnswer(
+        answer_value=0.4623,
+        unit="pure",
+        scale=Scale.UNITS,
+        answer_type=AnswerType.NUMERIC,
+        source_quote="q",
+        confidence=0.9,
+    )
+    truth = GroundTruth(value=0.4623, uom="pure", level=2)
+    assert grade(answer, truth).correct
+
+
+def test_a_percent_unit_on_a_dollar_question_is_a_unit_mismatch() -> None:
+    """Translating percent to pure must not make it match USD."""
+    answer = AgentAnswer(
+        answer_value=46.23,
+        unit="percent",
+        scale=Scale.UNITS,
+        answer_type=AnswerType.NUMERIC,
+        source_quote="q",
+        confidence=0.9,
+    )
+    truth = GroundTruth(value=4623.0, uom="USD", level=1)
+    assert grade(answer, truth).error_class is ErrorClass.UNIT_MISMATCH
+
+
+def test_normalize_uom_still_refuses_percent_on_its_own() -> None:
+    """Only an agent's answer may carry a percent.
+
+    Ground truth comes from XBRL, which stores ratios as pure decimals, so a
+    percent arriving through normalize_uom is a bug worth raising on rather than
+    a unit to translate.
+    """
+    from eval.normalizers import normalize_uom
+
+    with pytest.raises(ValueError):
+        normalize_uom("percent")
