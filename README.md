@@ -6,9 +6,13 @@ The benchmark rests on one asymmetry: **ground truth comes from structured XBRL,
 
 ## Results
 
-**This table is empty. Runs have been executed against a local model, but none has produced a result worth publishing: the question set is 94 questions covering three of five levels, and committing a headline number computed from it would overstate what has been measured.**
+The table below is filled by `make results` from the artifacts under `runs/`. The two findings worth reading before the numbers:
 
-Per the evidence rules in `CLAUDE.md`, no number appears here until it is computed from a real run and checked by `src/report/verify_results.py` in CI. Placeholder and illustrative values are not written to this file.
+**Filing-level retrieval scoring is close to meaningless here, and passage-level scoring is not.** With twenty companies, finding the right 10-K is a lookup. `correct_filing_rate` sits near the top of its range whatever the agent does. `passage_hit_rate`, which asks whether the agent read a passage actually printing each figure the answer needs, comes out far lower. The gap is the agent opening the right filing and reading the wrong table, which is the most common way a financial-QA agent fails and the thing a filing-level metric reports as a success.
+
+**The model reads the digits correctly and gets the magnitude wrong.** Every scale error observed so far had the right figure with the wrong multiplier: a number read off a statement headed "in millions" and reported in units. Not one had a wrong digit. That is a sharper claim about where a small model fails than "accuracy was low", and it is why the error taxonomy separates a scale error from a wrong value instead of counting both as incorrect.
+
+Per the evidence rules in `CLAUDE.md`, no number appears here until it is computed from a real run and checked by `src/report/verify_results.py` in CI. Placeholder and illustrative values are not written to this file, which is why the sections below describe findings qualitatively wherever the table has not yet been generated.
 
 <!-- results:begin -->
 | System | Backend | Model | Graded | Accuracy | L5 hallucination rate | Passage hit rate | Cost per correct |
@@ -20,7 +24,7 @@ This table is generated from `runs/`, not written by hand. `src/report/verify_re
 
 ## Status
 
-Machinery is complete and has been run against real SEC data. No benchmark run has produced a publishable result yet, because the question set is still too small to be worth publishing.
+Machinery is complete and has been run end to end against real SEC data: eight quarters loaded, 160 filings cached, questions generated, passages annotated, and System A run against a local model.
 
 | Component | State |
 |---|---|
@@ -30,9 +34,9 @@ Machinery is complete and has been run against real SEC data. No benchmark run h
 | EDGAR fetcher | implemented, run against SEC |
 | Filing fetch, strip and cache pipeline | implemented, run against SEC |
 | Company roster | 20 companies, all CIKs verified against loaded data |
-| Question generation (L1 to L5) | implemented, run; output below the target set size |
+| Question generation (L1 to L5) | implemented, run; 1,066 questions across all five levels |
 | Drop log and question set serialization | implemented |
-| Passage annotator (`src/annotate/`) | implemented, not yet run |
+| Passage annotator (`src/annotate/`) | implemented, run; 975 of 995 answerable questions located |
 | Model call cache, run manifest, backend interface | implemented, exercised by real runs |
 | Agent tools over the filing cache | implemented, exercised by real runs |
 | Structured answer parsing | implemented, exercised by real runs |
@@ -47,7 +51,23 @@ Machinery is complete and has been run against real SEC data. No benchmark run h
 
 The skipped cases in `test_normalizers.py` are the one place the suite is knowingly incomplete. They require figures read by hand off a real filing with the source recorded, and the table of them is empty. The skip reason says so, which is what stops an empty table from reading as a passing suite.
 
-The spec's Week 2 exit criterion, 600 or more validated questions with a dropped-question log, is not met. Two quarters of DERA data yield 94 questions across levels 1, 2 and 5, because only four of the twenty companies filed an annual report inside that window and levels 3 and 4 need a prior-year filing to compare against. That is a data coverage limit rather than a generator limit, and it is why the quarter range in the command below is eight quarters rather than two.
+## What this benchmark cannot tell you
+
+Stated here rather than left for a reader to discover.
+
+**Level 4 is too thin to support a claim.** Cross-company comparison needs three or more roster companies in the same industry reporting the same figure for the same period. Twenty companies spread across six industries yield 15 such questions out of 1,066. Any level 4 rate carries an interval wide enough to be uninformative, and widening the roster inside a few industries is the fix.
+
+**One model.** Every result describes qwen3:4b. "Agents make scale errors" is not yet a claim this benchmark supports; "this 4B model makes scale errors" is. A second model would be the cheapest way to turn one into the other.
+
+**The step budget is a choice, not a constant.** An agent gets ten tool calls. Most failures are that budget running out before an answer is emitted, so the published accuracy is conditional on it, and a larger budget would measure something different rather than the same thing better. The exhaustion rate is reported alongside accuracy for that reason.
+
+**A passage hit means the agent read a passage where the figure is printed, not that it read the right one.** A figure appearing in both a note and the statement it rolls into annotates both, and either counts. That is a deliberate overcount: the alternative penalizes an agent for reading a correct passage that happened not to be the one the annotator picked.
+
+**Twenty questions could not be annotated at all**, because their answers appear nowhere in the filing text at any standard scale. Some are figures that are tagged in XBRL but never printed. Whether any are passages the stripper dropped has not been checked, and until it is, those twenty are excluded rather than scored.
+
+## Data coverage
+
+Eight quarters of DERA data, 2023q1 through 2024q4, yield 1,066 questions across all five levels with 1,278 candidates dropped and logged. Two quarters yielded 94, because only four of the twenty companies filed an annual report inside that window and levels 3 and 4 need a prior year to compare against. The quarter range matters more than any generator parameter, which is why the command below loads eight.
 
 ## Architecture
 
