@@ -8,16 +8,18 @@ The benchmark rests on one asymmetry: **ground truth comes from structured XBRL,
 
 The table below is filled by `make results` from the artifacts under `runs/`. The two findings worth reading before the numbers:
 
-**Filing-level retrieval scoring is close to meaningless here, and passage-level scoring is not.** With twenty companies, finding the right 10-K is a lookup. `correct_filing_rate` sits near the top of its range whatever the agent does. `passage_hit_rate`, which asks whether the agent read a passage actually printing each figure the answer needs, comes out far lower. The gap is the agent opening the right filing and reading the wrong table, which is the most common way a financial-QA agent fails and the thing a filing-level metric reports as a success.
+**Filing-level retrieval scoring is close to meaningless here, and passage-level scoring is not.** With twenty companies, finding the right 10-K is a lookup, and `correct_filing_rate` comes out at <!-- claim: 20261016T180014Z-systemA-qwen3-4b correct_filing_rate.point 0.7778 -->77.8% [59.2%, 89.4%]. `passage_hit_rate`, which asks whether the agent read a passage actually printing each figure the answer needs, comes out at <!-- claim: 20261016T180014Z-systemA-qwen3-4b passage_hit_rate.point 0.5185 -->51.9% [34.0%, 69.3%]. The 26-point gap is the agent opening the right filing and reading the wrong table, which is the most common way a financial-QA agent fails and exactly what a filing-level metric reports as a success. That gap has held at 28, 26 and 26 points across three separate runs.
 
-**The model reads the digits correctly and gets the magnitude wrong.** Every scale error observed so far had the right figure with the wrong multiplier: a number read off a statement headed "in millions" and reported in units. Not one had a wrong digit. That is a sharper claim about where a small model fails than "accuracy was low", and it is why the error taxonomy separates a scale error from a wrong value instead of counting both as incorrect.
+**The model reads the digits correctly and gets the magnitude wrong.** Scale errors are the largest error class, tied with retrieval misses, and every one observed had the right figure with the wrong multiplier: a number read off a statement headed "in millions" and reported in units, off by exactly a factor of a thousand or a million. Not one had a wrong digit. That is a sharper claim about where a small model fails than "accuracy was low", and it is why the error taxonomy separates a scale error from a wrong value instead of counting both as incorrect.
+
+**Four in five tasks never produce an answer at all.** <!-- claim: 20261016T180014Z-systemA-qwen3-4b failed 121 -->121 of 150 tasks failed rather than answering: 83 exhausted the ten-step budget, 28 produced output that parsed as neither a tool call nor an answer, and 7 hit backend errors. A failed task is not a wrong answer and is excluded from accuracy, so the accuracy figure describes the 29 tasks that finished. The failure rate is the more interesting number, and it is not a retrieval problem: in the preceding run, nine of the failed tasks had already read the passage containing the answer and spent their remaining steps calling tools instead of committing to it.
 
 Per the evidence rules in `CLAUDE.md`, no number appears here until it is computed from a real run and checked by `src/report/verify_results.py` in CI. Placeholder and illustrative values are not written to this file, which is why the sections below describe findings qualitatively wherever the table has not yet been generated.
 
 <!-- results:begin -->
 | System | Backend | Model | Graded | Accuracy | L5 hallucination rate | Passage hit rate | Cost per correct |
 |---|---|---|---|---|---|---|---|
-| _(no runs yet)_ | | | | | | | |
+| A | ollama | qwen3:4b | 29 | 34.5% [19.9%, 52.6%] | 0.0% [0.0%, 65.8%] | 51.8% [34.0%, 69.3%] (n=27) | $0.0000 |
 <!-- results:end -->
 
 This table is generated from `runs/`, not written by hand. `src/report/verify_results.py` regenerates it from the raw task records and fails the build if it differs, so it cannot drift away from the runs behind it. A number quoted in prose carries a claim marker naming the run and metric it came from, and is checked the same way.

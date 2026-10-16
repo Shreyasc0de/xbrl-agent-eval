@@ -1,0 +1,96 @@
+{
+  "accuracy_by_level": {
+    "1": {
+      "ci95_high": 0.5399,
+      "ci95_low": 0.1536,
+      "point": 0.3158,
+      "successes": 6,
+      "total": 19
+    },
+    "2": {
+      "ci95_high": 0.85,
+      "ci95_low": 0.15,
+      "point": 0.5,
+      "successes": 2,
+      "total": 4
+    },
+    "3": {
+      "ci95_high": 0.4899,
+      "ci95_low": 0.0,
+      "point": 0.0,
+      "successes": 0,
+      "total": 4
+    },
+    "4": {
+      "ci95_high": 1.0,
+      "ci95_low": 0.0,
+      "point": 0.0,
+      "successes": 0,
+      "total": 0
+    },
+    "5": {
+      "ci95_high": 1.0,
+      "ci95_low": 0.3424,
+      "point": 1.0,
+      "successes": 2,
+      "total": 2
+    }
+  },
+  "accuracy_overall": {
+    "ci95_high": 0.5265,
+    "ci95_low": 0.1994,
+    "point": 0.3448,
+    "successes": 10,
+    "total": 29
+  },
+  "correct_filing_rate": {
+    "ci95_high": 0.8939,
+    "ci95_low": 0.5924,
+    "point": 0.7778,
+    "successes": 21,
+    "total": 27
+  },
+  "cost_per_correct_answer_usd": 0.0,
+  "error_taxonomy": {
+    "false_abstention": 3,
+    "retrieval_miss": 6,
+    "scale_error": 6,
+    "unit_mismatch": 2,
+    "wrong_value": 2
+  },
+  "failed": 121,
+  "false_abstention_rate_l1_l4": {
+    "ci95_high": 0.2806,
+    "ci95_low": 0.0385,
+    "point": 0.1111,
+    "successes": 3,
+    "total": 27
+  },
+  "graded": 29,
+  "hallucination_rate_l5": {
+    "ci95_high": 0.6576,
+    "ci95_low": 0.0,
+    "point": 0.0,
+    "successes": 0,
+    "total": 2
+  },
+  "latency_ms": {
+    "median": 55.4,
+    "p95": 126550.1
+  },
+  "model_calls": 1265,
+  "passage_annotated": 27,
+  "passage_hit_rate": {
+    "ci95_high": 0.6926,
+    "ci95_low": 0.3399,
+    "point": 0.5185,
+    "successes": 14,
+    "total": 27
+  },
+  "tasks": 150,
+  "tool_calls_per_task": {
+    "median": 8.0,
+    "p95": 10.0
+  },
+  "total_cost_usd": 0.0
+}
