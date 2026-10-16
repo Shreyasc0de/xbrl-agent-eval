@@ -188,4 +188,6 @@ no fabricated results ever; every run asserts that its model call count is great
 
 ## License
 
-Not yet chosen.
+MIT. See `LICENSE`.
+
+The SEC data this benchmark is built on is public domain. Nothing under `data/` is committed, and the loader fetches it from SEC on demand.
